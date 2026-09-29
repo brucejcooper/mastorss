@@ -288,6 +288,24 @@ assert.notEqual(posted[1].key, posted[0].key);
 await page.click('#timeline article[data-id="1120"] button[aria-label="Favourite"]');
 await page.waitForFunction(() => document.querySelector('#timeline article[data-id="1120"] button[aria-label="Favourite"]').classList.contains('on'));
 
+// Reload when fully caught up: the most recent read posts are on screen
+// above the "caught up" message, not hidden off the top.
+await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+await page.waitForFunction(() => document.querySelectorAll('#timeline article:not(.read)').length === 0);
+await page.waitForTimeout(300);
+await page.reload();
+await page.waitForSelector('#end.caught-up');
+await page.waitForSelector('#timeline article.read');
+await page.waitForFunction(() => window.scrollY > 0); // the jump has happened
+await page.waitForTimeout(300);
+const onScreen = await page.evaluate(() => {
+  const header = document.querySelector('#bar').getBoundingClientRect().height;
+  const visible = (n) => { const r = n.getBoundingClientRect(); return r.bottom > header + 100 && r.top < innerHeight - 100; };
+  const read = [...document.querySelectorAll('#timeline article.read')];
+  return { last: visible(read.at(-1)), end: visible(document.querySelector('#end .done')) };
+});
+assert.deepEqual(onScreen, { last: true, end: true }, 'last read posts and the caught-up message both visible');
+
 await page.screenshot({ path: process.env.SHOT || 'test/screenshot.png' });
 await browser.close();
 console.log('e2e ok');

@@ -187,12 +187,17 @@ class Reader {
     }
   }
 
-  // Put the first unread post just under the header (or the "caught up"
-  // message if there is nothing new).
+  // Put the first unread post just under the header. With nothing unread,
+  // show the last few read posts with the "caught up" message below them,
+  // rather than the message alone.
   jumpToFirstUnread() {
-    const target = this.articles()[this.readCursor] || (this.readCursor ? this.end : null);
-    if (!target) return;
-    window.scrollTo(0, target.getBoundingClientRect().top + window.scrollY - this.headerHeight());
+    const first = this.articles()[this.readCursor];
+    if (first) {
+      window.scrollTo(0, first.getBoundingClientRect().top + window.scrollY - this.headerHeight());
+    } else if (this.readCursor) {
+      const endTop = this.end.getBoundingClientRect().top + window.scrollY;
+      window.scrollTo(0, Math.max(0, endTop - window.innerHeight * 0.6));
+    }
   }
 
   async loadOlder() {
