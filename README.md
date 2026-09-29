@@ -4,7 +4,7 @@ A small PWA that reads your Mastodon home timeline the way an RSS reader does:
 
 - The app keeps a **"read up to" marker**. Anything at or before it doesn't come back.
 - You scroll **oldest → newest** from the marker until you run out ("You're all caught up").
-- A post counts as read once it scrolls up past the top bar. Next time you open the app it starts at the first post you haven't read. Already-read posts sit above it, faded, and older ones keep loading as you scroll up.
+- A post counts as read once it scrolls up past the top bar, or when you scroll down to the "You're all caught up" message below it. On a phone, pull up past that message to check for new posts. Next time you open the app it starts at the first post you haven't read. Already-read posts sit above it, faded, and older ones keep loading as you scroll up.
 
 In the app you can also:
 

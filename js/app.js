@@ -305,6 +305,11 @@ class Reader {
   }
 
   bindUi() {
+    // The bar is position: fixed; pad the page by its real height (which
+    // includes the iOS safe area and changes with text size).
+    const bar = $('#bar');
+    new ResizeObserver(() => document.documentElement.style.setProperty('--bar-h', `${bar.offsetHeight}px`)).observe(bar);
+
     // We position the page ourselves (at the first unread post); stop the
     // browser restoring the old scroll offset over the top of that.
     history.scrollRestoration = 'manual';
@@ -319,15 +324,22 @@ class Reader {
     };
     this.bindCompose();
 
+    // Browsers also fire scroll events when content is added or removed, so
+    // note when the reader actually touched, wheeled, clicked or typed.
+    let lastInput = 0;
+    for (const type of ['touchmove', 'wheel', 'pointerdown', 'keydown']) {
+      window.addEventListener(type, () => (lastInput = performance.now()), { passive: true });
+    }
     let ticking = false;
     window.addEventListener('scroll', () => {
       if (ticking || !this.overlaysClosed()) return;
       ticking = true;
       requestAnimationFrame(() => {
         ticking = false;
-        this.trackRead();
+        this.trackRead({ byScrolling: performance.now() - lastInput < 1000 });
       });
     }, { passive: true });
+    this.bindPull();
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
@@ -474,6 +486,43 @@ class Reader {
     this.streamTimer = setTimeout(() => this.checkForNew({ background: true }), STREAM_DEBOUNCE_MS);
   }
 
+  // Pull up past the end of the timeline to check for new posts: the
+  // bottom-of-the-page version of pull-to-refresh, since new posts arrive
+  // at the bottom.
+  bindPull() {
+    const PULL_PX = 70;
+    const hint = $('#pull-hint');
+    let startY = null;
+    let armed = false;
+    const atBottom = () => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+    const reset = () => {
+      startY = null;
+      armed = false;
+      hint.textContent = 'Pull up to check for new posts';
+      this.end.classList.remove('pulling');
+    };
+    window.addEventListener('touchstart', (e) => {
+      if (!this.caughtUp || !this.overlaysClosed() || e.touches.length !== 1 || !atBottom()) return;
+      startY = e.touches[0].clientY;
+    }, { passive: true });
+    window.addEventListener('touchmove', (e) => {
+      if (startY == null) return;
+      const pulled = startY - e.touches[0].clientY;
+      armed = pulled > PULL_PX && atBottom();
+      this.end.classList.toggle('pulling', pulled > 10);
+      hint.textContent = armed ? 'Release to check for new posts' : 'Pull up to check for new posts';
+    }, { passive: true });
+    window.addEventListener('touchend', () => {
+      const go = armed;
+      reset();
+      if (go) {
+        hint.textContent = 'Checking…';
+        this.checkForNew().finally(() => (hint.textContent = 'Pull up to check for new posts'));
+      }
+    });
+    window.addEventListener('touchcancel', reset);
+  }
+
   markCaughtUp() {
     this.caughtUp = true;
     this.end.classList.add('caught-up');
@@ -509,7 +558,12 @@ class Reader {
   }
 
   // A post counts as read once its bottom edge has scrolled up under the header.
-  trackRead() {
+  // Scrolling down to the "caught up" message also counts everything above
+  // it as read, so the last few posts don't need a screen of empty space
+  // below them. That only happens when the reader scrolls, never because a
+  // new post arrived while they were already at the bottom. Posts marked
+  // this way stay at full strength until the next visit.
+  trackRead({ byScrolling = false } = {}) {
     const limit = this.headerHeight();
     const items = this.articles();
     let advanced = false;
@@ -519,6 +573,15 @@ class Reader {
       node.classList.add('read');
       this.setPosition(node.dataset.id);
       this.readCursor++;
+      advanced = true;
+    }
+    const done = this.end.querySelector('.done');
+    if (byScrolling && this.caughtUp && this.readCursor < items.length && done.getBoundingClientRect().bottom <= window.innerHeight) {
+      for (; this.readCursor < items.length; this.readCursor++) {
+        const node = items[this.readCursor];
+        node.classList.add('read', 'fresh');
+        this.setPosition(node.dataset.id);
+      }
       advanced = true;
     }
     if (advanced) {
@@ -595,9 +658,8 @@ class Reader {
   openOverlay(panel) {
     if (!panel.hidden) return;
     panel.hidden = false;
-    panel.scrollTop = 0;
+    panel.querySelector('.overlay-body').scrollTop = 0;
     this.overlays.push(panel);
-    document.body.classList.add('overlay-open');
     history.pushState({ overlay: panel.id }, '');
   }
 
@@ -607,7 +669,6 @@ class Reader {
       panel.hidden = true;
       if (panel.id === 'thread') $('#thread-body').replaceChildren();
     }
-    if (!this.overlays.length) document.body.classList.remove('overlay-open');
   }
 
   async openThread(status) {
@@ -616,7 +677,7 @@ class Reader {
     this.openOverlay(panel);
     this.threadStatus = status;
     body.replaceChildren(el('p', { class: 'hint pad', text: 'Loading conversation…' }));
-    panel.scrollTop = 0;
+    body.scrollTop = 0;
     try {
       const [ctx, fresh] = await Promise.all([
         this.client.context(status.id),
@@ -640,7 +701,7 @@ class Reader {
       }
       body.replaceChildren(frag);
       if (focus && ctx.ancestors.length) {
-        panel.scrollTop = focus.offsetTop - panel.querySelector('.overlay-bar').offsetHeight;
+        body.scrollTop = focus.offsetTop;
       }
     } catch (err) {
       body.replaceChildren(el('p', { class: 'hint pad', text: "Couldn't load this conversation." }));

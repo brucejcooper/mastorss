@@ -198,7 +198,14 @@ await page.reload();
 await page.waitForSelector('#timeline article:not(.read)');
 assert.deepEqual(await unreadIds(), ['1120', '1121', '1122']);
 assert.equal(await readCount(), 20);
-assert.ok(Math.abs(await firstUnreadOffset()) < 2, 'scrolled to first unread after reload');
+// Only three short unread posts, so the page can't scroll the first one right
+// up to the bar: it scrolls as far as it can, with the first unread in view.
+assert.ok(await page.evaluate(() => {
+  const r = document.querySelector('#timeline article:not(.read)').getBoundingClientRect();
+  const bar = document.querySelector('#bar').getBoundingClientRect().height;
+  const atBottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+  return r.top >= bar - 2 && r.top < innerHeight && (Math.abs(r.top - bar) < 2 || atBottom);
+}), 'first unread in view after reload');
 
 // Scrolling up loads older posts without moving what's on screen.
 const anchorTop = () => page.$eval('#timeline article[data-id="1100"]', (n) => n.getBoundingClientRect().top);
@@ -325,6 +332,27 @@ await old.waitForSelector('#timeline article:not(.read)');
 assert.equal(await old.$eval('#timeline article:not(.read)', (n) => n.dataset.id), '1101', 'legacy position carried over');
 assert.equal(await old.isVisible('#login'), false, 'still logged in');
 await legacy.close();
+
+// Pulling up past the end checks for new posts.
+const touch = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block', hasTouch: true, isMobile: true });
+await mockServer(touch);
+await touch.routeWebSocket(/\/api\/v1\/streaming/, () => {}); // no live updates, so only the pull can fetch
+await touch.addInitScript(() => localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' })));
+const tp = await touch.newPage();
+await tp.goto(APP);
+await tp.waitForSelector('#end.caught-up');
+await tp.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+const newest = Math.max(...posts.map((p) => Number(p.id)));
+posts.push(status(newest + 1));
+await tp.evaluate(() => {
+  const at = (y) => [new Touch({ identifier: 1, target: document.body, clientX: 200, clientY: y })];
+  window.dispatchEvent(new TouchEvent('touchstart', { touches: at(700) }));
+  window.dispatchEvent(new TouchEvent('touchmove', { touches: at(560) }));
+});
+assert.match(await tp.textContent('#pull-hint'), /Release/);
+await tp.evaluate(() => window.dispatchEvent(new TouchEvent('touchend', { touches: [] })));
+await tp.waitForSelector(`#timeline article[data-id="${newest + 1}"]`);
+await touch.close();
 
 // A new deploy is noticed when the app comes back to the foreground: a
 // Reload bar while something is open, a straight reload otherwise.
