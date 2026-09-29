@@ -53,13 +53,12 @@ npm start   # serves on http://localhost:8123
 
 ### On GitHub Pages (for testing)
 
-`.github/workflows/pages.yml` runs the e2e test, then publishes the app to `https://brucejcooper.github.io/mastorss/` on every push to `main` or the development branch.
+`.github/workflows/pages.yml` runs the e2e test on every push, and on `main` publishes the app to `https://brucejcooper.github.io/mastorss/`.
 
 One-time setup:
 
 1. **Settings → Pages → Build and deployment → Source: GitHub Actions.** Pages on a private repo needs a paid GitHub plan. Otherwise make the repo public.
-2. The `github-pages` environment only lets `main` deploy by default. To deploy from another branch, add it under **Settings → Environments → github-pages → Deployment branches**. Otherwise merge to `main`.
-3. Re-run the workflow (Actions → Deploy to GitHub Pages → Run workflow).
+2. Re-run the workflow (Actions → Deploy to GitHub Pages → Run workflow).
 
 Notes:
 - GitHub Pages can't set headers, so the CSP is also in a `<meta>` tag in `index.html`.
