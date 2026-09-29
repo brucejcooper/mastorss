@@ -57,6 +57,13 @@ function showError(err) {
   showToast(err.message || String(err));
 }
 
+const spinner = () => el('span', { class: 'spinner', 'aria-hidden': 'true' });
+
+// A status line with an optional spinner in front.
+function busyText(text) {
+  return [spinner(), text];
+}
+
 function plainText(html) {
   const body = new DOMParser().parseFromString(html || '', 'text/html').body;
   body.querySelectorAll('script, style, template').forEach((n) => n.remove());
@@ -109,6 +116,7 @@ async function watchForUpdates() {
 // ---------------------------------------------------------------- login
 
 function showLogin() {
+  $('#boot').hidden = true;
   $('#login').hidden = false;
   $('#reader').hidden = true;
   const input = $('#instance');
@@ -179,8 +187,10 @@ class Reader {
   }
 
   async start() {
+    $('#boot').hidden = true;
     $('#login').hidden = true;
     $('#reader').hidden = false;
+    this.setStatus('Loading…', true);
     $('#who').textContent = `@${this.account.acct}@${this.session.instance}`;
     this.bindUi();
     await this.resolvePosition();
@@ -258,7 +268,7 @@ class Reader {
     if (this.loadingOlder || this.noMoreOlder || !this.oldest || !this.overlaysClosed()) return;
     this.loadingOlder = true;
     const status = $('#older-status');
-    status.textContent = 'Loading older posts…';
+    status.replaceChildren(...busyText('Loading older posts…'));
     let ok = false;
     try {
       const page = await this.client.homeBefore(this.oldest, PAGE_SIZE);
@@ -395,7 +405,7 @@ class Reader {
     if (this.loading || (this.caughtUp && !force)) return;
     this.loading = true;
     let ok = false;
-    if (!background) this.setStatus('Loading…');
+    this.setStatus(this.caughtUp ? 'Checking for new posts…' : 'Loading…', true);
     $('#retry').hidden = true;
     try {
       const page = await this.client.homeAfter(this.newest, PAGE_SIZE);
@@ -422,6 +432,7 @@ class Reader {
     } catch (err) {
       if (background) {
         console.warn('Background check failed', err);
+        this.setStatus('');
         $('#last-checked').textContent = "Couldn't check for new posts, will try again shortly.";
         this.schedulePoll();
       } else {
@@ -553,16 +564,15 @@ class Reader {
     return this.loadMore({ force: true, background });
   }
 
-  setStatus(text) {
-    $('#end-status').textContent = text;
+  setStatus(text, busy = false) {
+    $('#end-status').replaceChildren(...(busy ? busyText(text) : [text]));
   }
 
   // A post counts as read once its bottom edge has scrolled up under the header.
   // Scrolling down to the "caught up" message also counts everything above
   // it as read, so the last few posts don't need a screen of empty space
   // below them. That only happens when the reader scrolls, never because a
-  // new post arrived while they were already at the bottom. Posts marked
-  // this way stay at full strength until the next visit.
+  // new post arrived while they were already at the bottom.
   trackRead({ byScrolling = false } = {}) {
     const limit = this.headerHeight();
     const items = this.articles();
@@ -579,7 +589,7 @@ class Reader {
     if (byScrolling && this.caughtUp && this.readCursor < items.length && done.getBoundingClientRect().bottom <= window.innerHeight) {
       for (; this.readCursor < items.length; this.readCursor++) {
         const node = items[this.readCursor];
-        node.classList.add('read', 'fresh');
+        node.classList.add('read');
         this.setPosition(node.dataset.id);
       }
       advanced = true;
@@ -676,7 +686,7 @@ class Reader {
     const body = $('#thread-body');
     this.openOverlay(panel);
     this.threadStatus = status;
-    body.replaceChildren(el('p', { class: 'hint pad', text: 'Loading conversation…' }));
+    body.replaceChildren(el('p', { class: 'hint pad' }, ...busyText('Loading conversation…')));
     body.scrollTop = 0;
     try {
       const [ctx, fresh] = await Promise.all([
@@ -720,7 +730,7 @@ class Reader {
     if (!q) return;
     const results = $('#search-results');
     $('#search-q').blur(); // hide the on-screen keyboard
-    results.replaceChildren(el('p', { class: 'hint pad', text: 'Searching…' }));
+    results.replaceChildren(el('p', { class: 'hint pad' }, ...busyText('Searching…')));
     try {
       const r = await this.client.search(q);
       const ctx = { instance: this.session.instance };

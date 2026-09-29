@@ -213,8 +213,8 @@ details.cw.filtered > summary { color: var(--muted); font-weight: 400; }
 #end .done p { margin: 0.3rem 0; }
 .pull-hint { font-size: 0.8rem; opacity: 0.6; transition: opacity 0.2s, transform 0.2s; }
 #end.pulling .pull-hint { opacity: 1; transform: scale(1.05); color: var(--accent); }
-/* Marked read by reaching the end: keep full strength until the next visit. */
-.status.read.fresh { opacity: 1; }
+/* Fixed height so a spinner appearing here never shifts the posts above. */
+#end-status { height: 1.5rem; margin: 0 0 0.5rem; }
 
 /* ---------- settings + toast */
 
@@ -310,3 +310,15 @@ dialog > button.danger { color: var(--danger); }
   background: var(--text); color: var(--bg); padding: 0.5em 0.6em 0.5em 1em; border-radius: 12px; font-size: 0.9rem;
 }
 #update-bar .primary { padding: 0.35em 0.9em; }
+
+/* ---------- loading spinner */
+
+.spinner {
+  display: inline-block; width: 1em; height: 1em; margin-right: 0.45em; vertical-align: -0.15em;
+  border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+.boot { position: fixed; inset: 0; display: grid; place-items: center; color: var(--accent); font-size: 2rem; }
+.boot .spinner { margin: 0; border-width: 3px; }

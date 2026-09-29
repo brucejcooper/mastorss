@@ -36,6 +36,7 @@ function status(id) {
 let serverMarker = '1010';
 const posted = [];
 let failTimeline = false;
+let slowMs = 0;
 let timelineRequests = 0;
 const markerPosts = [];
 
@@ -88,6 +89,7 @@ async function mockServer(ctx) {
       case '/api/v1/timelines/home': {
         timelineRequests++;
         if (failTimeline) return json(route, { error: 'boom' }, 503);
+        if (slowMs) await new Promise((r) => setTimeout(r, slowMs));
         const limit = Number(url.searchParams.get('limit'));
         const min = url.searchParams.get('min_id');
         const max = url.searchParams.get('max_id');
@@ -173,6 +175,8 @@ await page.waitForTimeout(200);
 const pos = await page.evaluate(() => JSON.parse(localStorage.getItem(`mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`)));
 assert.equal(pos, '1119', 'read to the end');
 assert.equal(await page.textContent('#count'), '0 unread');
+assert.equal(await page.$eval('#timeline article:last-child', (n) => getComputedStyle(n).opacity), '0.55', 'last post dimmed once read');
+assert.equal(await page.isVisible('#boot'), false, 'startup spinner gone');
 assert.ok((await page.$$('#timeline article')).length < 80, 'old read posts trimmed from DOM');
 assert.deepEqual(markerPosts, [], 'server marker untouched while sync is off');
 
@@ -215,6 +219,13 @@ const top1 = await anchorTop();
 await page.waitForTimeout(300);
 assert.equal(Math.round(await anchorTop()), Math.round(top1), 'prepending keeps the view steady');
 assert.deepEqual(await unreadIds(), ['1120', '1121', '1122'], 'older posts stay read');
+
+// Checking shows a spinner until the server answers.
+slowMs = 800;
+await page.click('#check-new');
+await page.waitForSelector('#end-status .spinner');
+await page.waitForSelector('#end-status .spinner', { state: 'detached' });
+slowMs = 0;
 
 // A failing load shows Retry and does not hammer the server.
 failTimeline = true;
