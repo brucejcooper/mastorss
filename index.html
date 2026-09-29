@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mastorss</title>
+  <meta name="description" content="Read your Mastodon home timeline oldest to newest, like an RSS reader.">
+  <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16171b" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Mastorss">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <section id="login" hidden>
+    <h1>Mastorss</h1>
+    <p>Your Mastodon home timeline, read oldest to newest. Stop anywhere and you pick up from the same spot next time.</p>
+    <form id="login-form">
+      <label for="instance">Your server</label>
+      <input id="instance" name="instance" autocomplete="url" autocapitalize="off" spellcheck="false" inputmode="url" required>
+      <button type="submit" class="primary">Log in</button>
+    </form>
+    <p class="hint">Installed to your home screen and login doesn't come back here?
+      <button type="button" id="use-code" class="linklike">Log in with a code instead</button></p>
+    <form id="code-form" hidden>
+      <p>Approve access in the page that opened (or <a id="code-link" target="_blank" rel="noopener">open it here</a>), then paste the code it shows.</p>
+      <input id="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" required>
+      <button type="submit" class="primary">Continue</button>
+    </form>
+  </section>
+
+  <section id="reader" hidden>
+    <header id="bar">
+      <button id="menu" type="button" aria-label="Settings">☰</button>
+      <div class="bar-title">
+        <strong id="count"></strong>
+        <small id="who"></small>
+      </div>
+      <button id="refresh" type="button" aria-label="Next post" title="Next post (j)">⌄</button>
+    </header>
+
+    <main id="timeline"></main>
+
+    <div id="end">
+      <p id="end-status"></p>
+      <button id="retry" type="button" class="primary" hidden>Retry</button>
+      <div class="done">
+        <p class="big">You're all caught up</p>
+        <p>Everything above is marked read.</p>
+        <button id="check-new" type="button" class="primary">Check for new posts</button>
+      </div>
+    </div>
+  </section>
+
+  <dialog id="settings">
+    <h2>Settings</h2>
+    <label class="row">
+      <input type="checkbox" id="sync-marker">
+      <span>Sync my position through Mastodon's timeline marker
+        <small>Lets other devices running Mastorss pick up where you left off. Other apps (including Mastodon's own web interface) may overwrite this marker and make you skip posts, so leave it off unless you need it.</small></span>
+    </label>
+    <p id="position-info" class="hint"></p>
+    <button id="mark-all" type="button">Mark everything read</button>
+    <button id="logout" type="button" class="danger">Log out</button>
+    <button id="settings-close" type="button" class="primary">Done</button>
+  </dialog>
+
+  <div id="toast" role="alert" hidden></div>
+</body>
+</html>

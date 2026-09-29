@@ -1,0 +1,14 @@
+{
+  "name": "mastorss",
+  "private": true,
+  "description": "Read your Mastodon home timeline oldest to newest, like an RSS reader.",
+  "type": "module",
+  "scripts": {
+    "start": "http-server -p 8123 -c-1 -s .",
+    "test": "node test/e2e.mjs"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "playwright": "^1.56.1"
+  }
+}

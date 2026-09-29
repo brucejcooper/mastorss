@@ -1,1 +1,102 @@
-# mastorss
+# Mastorss
+
+A small PWA that reads your Mastodon home timeline the way an RSS reader does:
+
+- The app keeps a **"read up to" marker**. Anything at or before it doesn't come back.
+- You scroll **oldest → newest** from the marker until you run out ("You're all caught up").
+- A post counts as read once it scrolls up past the top bar. Stop anywhere and the next session starts at the first post you haven't read.
+
+Use the normal Mastodon app for discovery, following, notifications and posting. Mastorss is only for reading. Replies, author names, mentions and hashtags open on your own server (`https://mastodon.au/...`) so you can follow and reply there. Favourite, boost and bookmark work in place.
+
+It's a static site with no build step, no backend and no dependencies. It talks directly to your Mastodon server's API from the browser.
+
+## Why not an existing client?
+
+Before building this I looked at the main iOS clients (September 2026):
+
+| Client | Position handling | Why it isn't quite this |
+|---|---|---|
+| **Ivory** (Tapbots) | Keeps your place and syncs it (iCloud; Mastodon markers planned/partial). Tweetbot-style: you open at your last-read post and scroll **up** towards newer ones. | Closest match. But newest is still at the top, older posts are still in the timeline, and it has to fill gaps before it can jump to your spot. |
+| **Ice Cubes** | "Semi-automatic" timeline sync through the Mastodon marker API, plus a cached timeline and an unread counter. | Also reverse-chronological, reading upward. The marker is a convenience, not a hard boundary. |
+| **Mona** | Very configurable; people who read oldest→newest praise it for filling gaps properly and showing the whole timeline. | Still a newest-on-top timeline you read upward, with a large settings surface. No "read is gone" model. |
+| Mastodon (official), Elk, Phanpy, etc. | Official web UI *resets* the home marker instead of honouring it ([mastodon#23677](https://github.com/mastodon/mastodon/issues/23677)). Phanpy has a "catch-up" digest. | Newest-first and no persistent read boundary. |
+| RSS bridges (account/tag RSS, Open RSS, feedi) | A real RSS reader gives you oldest-first and read state. | You lose your home timeline (boosts, the people you follow as a unit), and following people then happens in two places. |
+
+Summary: Ivory, Ice Cubes and Mona all remember your spot, but they all read upward in a newest-first list. None treat "read" as gone or read top-to-bottom oldest-first. If you'd rather not self-host, **Ivory is the closest ready-made option**. Otherwise, this app.
+
+## How it works
+
+- **Login**: OAuth authorization-code flow with PKCE. The app registers itself with your server on first login (`POST /api/v1/apps`), using the URL it's served from as the redirect URI. Scopes: `read write:favourites write:statuses write:bookmarks` (the `write:statuses` scope is only used for boosts).
+- **Reading**: `GET /api/v1/timelines/home?min_id=<marker>` returns the page directly after the marker. That page is reversed to oldest-first, and each next page is fetched after the newest post loaded so far.
+- **Marker**: stored per account in `localStorage` and saved as you scroll. Read posts are pruned from the page as you go so long sessions stay light.
+- **Filters**: server-side filters are respected. "Hide" filters drop the post, "warn" filters collapse it.
+- **Content**: remote HTML is run through an allowlist sanitiser. The nginx config adds a CSP as a second layer.
+
+### Syncing between devices
+
+Settings has an optional **"Sync my position through Mastodon's timeline marker"** switch. It's off by default, because other clients write to the same marker. In particular, Mastodon's own web UI resets it to the newest post when it loads, which would make Mastorss skip everything you hadn't read. Turn it on if you read Mastorss on more than one device and don't use the Mastodon web UI. When it's on, Mastorss uses whichever position is further along, local or server.
+
+### Things to know
+
+- **Mastodon only keeps about the last 800 posts in each home feed.** If you're away long enough for more than that to arrive, the oldest unread posts are no longer served by the API. Mastorss starts from the oldest post still available, and there's no way to get the rest back.
+- Composing new posts isn't built in. Use the 💬 button to open the thread on your server and reply there.
+
+## Running it
+
+### Try it locally
+
+```sh
+npm start   # serves on http://localhost:8123
+```
+
+`localhost` counts as a secure origin, so login and the service worker work without HTTPS.
+
+### On your home server
+
+PWAs need **HTTPS** (for the service worker, `crypto.subtle` for PKCE, and "Add to Home Screen" as an app). Any static file server works. A Docker image with nginx is included:
+
+```sh
+docker compose up -d --build     # serves on :8080
+```
+
+Then put HTTPS in front of it. Two easy options:
+
+- **Tailscale** (private to your devices, nothing exposed to the internet):
+  `tailscale serve --bg 8080` → `https://<machine>.<tailnet>.ts.net/`
+- **Caddy** with a real domain (automatic Let's Encrypt):
+  ```
+  mastorss.example.com {
+      reverse_proxy localhost:8080
+  }
+  ```
+
+Mastodon only needs to redirect your browser back to the app, so the app doesn't have to be reachable from mastodon.au. A Tailscale-only URL works.
+
+The redirect URI is registered per URL, so if you move the app to a new address, log in again there.
+
+### Installing on iPhone
+
+1. Open the HTTPS URL in Safari → Share → **Add to Home Screen**.
+2. Open it from the home screen and log in (`mastodon.au` is pre-filled).
+3. If approving on mastodon.au leaves you in a Safari sheet instead of back in the app, tap **"Log in with a code instead"**, approve, and paste the code it shows. Home-screen apps have storage separate from Safari, so the login has to finish inside the installed app.
+
+Keyboard (iPad/desktop): `j` next post, `k` back, `r` check for new posts once caught up.
+
+## Development
+
+```sh
+npm install
+npm start &     # http://localhost:8123
+npm test        # Playwright e2e against a mocked Mastodon server
+```
+
+The test covers login (PKCE), starting after the marker, oldest-first order, filtered/sanitised content, reading to the end, pruning, checking for new posts, resuming after reload, marker sync, and favouriting.
+
+Files:
+
+- `index.html`, `styles.css`: shell and styling (light/dark)
+- `js/api.js`: OAuth + Mastodon API
+- `js/render.js`: status rendering and HTML sanitising
+- `js/app.js`: reader logic (marker, paging, read tracking)
+- `sw.js`: service worker (caches the app shell only, never API responses)
+- `deploy/nginx.conf`, `Dockerfile`, `compose.yaml`: hosting
