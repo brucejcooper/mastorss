@@ -326,4 +326,15 @@ export function renderTag(tag, { instance }) {
     el('small', { text: uses ? `${uses} posts this week` : '' }));
 }
 
+// iOS 17+ opens x-safari-https:// links in Safari itself rather than in the
+// in-app viewer a home-screen app gets. Returns null for non-web links.
+export function safariUrl(href) {
+  try {
+    const u = new URL(href);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? `x-safari-${u.href}` : null;
+  } catch {
+    return null;
+  }
+}
+
 export { el };

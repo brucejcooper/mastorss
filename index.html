@@ -116,6 +116,11 @@
       <span>Sync my position through Mastodon's timeline marker
         <small>Lets other devices running Mastorss pick up where you left off. Other apps (including Mastodon's own web interface) may overwrite this marker and make you skip posts, so leave it off unless you need it.</small></span>
     </label>
+    <label class="row" id="safari-row" hidden>
+      <input type="checkbox" id="links-in-safari">
+      <span>Open links in Safari
+        <small>Avoids the blank page left behind when a link opens another app (YouTube, Mastodon, …). Needs iOS 17 or later; switch back to Mastorss when you're done.</small></span>
+    </label>
     <p id="position-info" class="hint"></p>
     <button id="mark-all" type="button">Mark everything read</button>
     <button id="logout" type="button" class="danger">Log out</button>

@@ -1,5 +1,5 @@
 import { Client, beginLogin, finishLogin, normaliseInstance, revoke, compareIds, nextId } from './api.js';
-import { renderStatus, renderAccount, renderTag, el } from './render.js';
+import { renderStatus, renderAccount, renderTag, el, safariUrl } from './render.js';
 
 const $ = (sel) => document.querySelector(sel);
 const DEFAULT_INSTANCE = 'mastodon.au';
@@ -13,6 +13,12 @@ const STREAM_RETRY_MAX_MS = 60_000;
 const QUICK_FETCH_MS = 1000;
 const FETCHED_SHOW_MS = 1000;
 const STATUS_FADE_MS = 300; // matches the #end-status transition
+const SAFARI_FALLBACK_MS = 1500;
+
+// iOS only: `navigator.standalone` exists in Safari on iPhone/iPad and is
+// true when running from the home screen.
+const IS_IOS = 'standalone' in navigator;
+const IOS_HOME_SCREEN = navigator.standalone === true;
 const KEEP_READ_IN_DOM = 30;
 const HISTORY_SIZE = 20; // already-read posts shown above the reading position on load
 const VISIBILITIES = ['public', 'unlisted', 'private', 'direct']; // least to most restrictive
@@ -319,7 +325,33 @@ class Reader {
     });
   }
 
+  // On an iOS home-screen app, links to other sites open in an in-app Safari
+  // viewer. If that page hands off to another app (YouTube, Mastodon, ...),
+  // iOS leaves a blank viewer behind that we can neither detect nor close.
+  // So send those links to Safari proper instead (iOS 17+). If nothing
+  // happens (older iOS), fall back to the normal behaviour.
+  linksInSafari() {
+    return this.settings.linksInSafari ?? IOS_HOME_SCREEN;
+  }
+
+  bindExternalLinks() {
+    document.addEventListener('click', (e) => {
+      if (!this.linksInSafari() || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = e.target.closest('a[href]');
+      if (!a) return;
+      const url = new URL(a.href, location.href);
+      const target = url.origin === location.origin ? null : safariUrl(url.href);
+      if (!target) return;
+      e.preventDefault();
+      location.href = target;
+      setTimeout(() => {
+        if (document.visibilityState === 'visible') window.open(url.href, '_blank', 'noopener');
+      }, SAFARI_FALLBACK_MS);
+    });
+  }
+
   bindUi() {
+    this.bindExternalLinks();
     // The bar is position: fixed; pad the page by its real height (which
     // includes the iOS safe area and changes with text size).
     const bar = $('#bar');
@@ -876,6 +908,13 @@ class Reader {
         this.serverDirty = true;
         this.flushMarker();
       }
+    };
+    $('#safari-row').hidden = !IS_IOS;
+    const safari = $('#links-in-safari');
+    safari.checked = this.linksInSafari();
+    safari.onchange = () => {
+      this.settings.linksInSafari = safari.checked;
+      store.set(this.settingsKey, this.settings);
     };
     $('#position-info').textContent = this.position ? `Read up to post ${this.position}` : 'No position saved yet';
     $('#mark-all').onclick = async () => {

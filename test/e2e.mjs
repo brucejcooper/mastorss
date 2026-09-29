@@ -250,6 +250,7 @@ await page.waitForSelector('#end.caught-up');
 
 // Turn marker sync on and confirm it is written.
 await page.click('#menu');
+assert.equal(await page.isVisible('#safari-row'), false, 'Safari setting only on iOS');
 await page.check('#sync-marker');
 await page.click('#settings-close');
 await page.waitForTimeout(300);
@@ -353,6 +354,34 @@ await old.waitForSelector('#timeline article:not(.read)');
 assert.equal(await old.$eval('#timeline article:not(.read)', (n) => n.dataset.id), '1101', 'legacy position carried over');
 assert.equal(await old.isVisible('#login'), false, 'still logged in');
 await legacy.close();
+
+// iOS home-screen app: links to other sites go to Safari (x-safari-https://)
+// rather than the in-app viewer, falling back to a normal open if nothing
+// takes over (as here: Chromium doesn't know the scheme).
+const ios = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
+await mockServer(ios);
+await ios.addInitScript(() => {
+  Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true });
+  localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' }));
+  window.opened = [];
+  window.open = (url) => window.opened.push(url);
+});
+const ip = await ios.newPage();
+await ip.goto(APP);
+await ip.waitForSelector('#timeline article .content a.hashtag');
+assert.equal(await ip.evaluate(async () => (await import('./js/render.js')).safariUrl('https://example.com/a?b=1')), 'x-safari-https://example.com/a?b=1');
+let popup = false;
+ip.on('popup', () => (popup = true));
+await ip.click('#timeline article .content a.hashtag');
+await ip.waitForTimeout(300);
+assert.deepEqual(await ip.evaluate(() => window.opened), [], 'not opened in the in-app viewer straight away');
+await ip.waitForFunction(() => window.opened.length === 1, null, { timeout: 3000 });
+assert.equal(await ip.evaluate(() => window.opened[0]), 'https://mastodon.au/tags/test', 'falls back when Safari does not take over');
+assert.equal(popup, false);
+await ip.click('#menu');
+assert.equal(await ip.isVisible('#safari-row'), true, 'setting shown on iOS');
+assert.equal(await ip.isChecked('#links-in-safari'), true, 'on by default on the home screen');
+await ios.close();
 
 // Pulling up past the end checks for new posts.
 const touch = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block', hasTouch: true, isMobile: true });
