@@ -13,6 +13,9 @@ export function redirectUri() {
   return u.toString();
 }
 
+// Per-copy key for the login in progress (see the scoping note in app.js).
+const pendingKey = () => `mastorss.pending.${redirectUri()}`;
+
 export function normaliseInstance(input) {
   let s = (input || '').trim().toLowerCase();
   s = s.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
@@ -61,7 +64,7 @@ export async function beginLogin(instance, { oob = false } = {}) {
   const verifier = randomString(48);
   const state = randomString(16);
   const redirect = oob ? OOB : redirectUri();
-  localStorage.setItem('mastorss.pending', JSON.stringify({ instance, verifier, state, redirect }));
+  localStorage.setItem(pendingKey(), JSON.stringify({ instance, verifier, state, redirect }));
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: app.client_id,
@@ -79,7 +82,7 @@ export async function beginLogin(instance, { oob = false } = {}) {
 // Exchanges an authorization code for a token. `state` is checked when present
 // (it is absent in the paste-the-code flow).
 export async function finishLogin(code, state) {
-  const pending = JSON.parse(localStorage.getItem('mastorss.pending') || 'null');
+  const pending = JSON.parse(localStorage.getItem(pendingKey()) || 'null');
   if (!pending) throw new Error('No login in progress');
   if (state && state !== pending.state) throw new Error('Login state mismatch, please try again');
   const app = await registerApp(pending.instance);
@@ -98,7 +101,7 @@ export async function finishLogin(code, state) {
   });
   if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
   const token = await res.json();
-  localStorage.removeItem('mastorss.pending');
+  localStorage.removeItem(pendingKey());
   return { instance: pending.instance, token: token.access_token };
 }
 

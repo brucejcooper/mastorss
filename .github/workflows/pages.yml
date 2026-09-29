@@ -1,7 +1,17 @@
 name: Deploy to GitHub Pages
 
+# Publishes two copies of the app to one Pages site:
+#   /mastorss/       prod, from main (the one installed on the phone)
+#   /mastorss/test/  test, from the development branch
+# It runs after CI passes on either branch. workflow_run jobs run in the
+# context of the default branch, which is what the github-pages environment
+# allows to deploy, so pushes to the development branch can update test
+# without touching main.
+
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main, claude/mastodon-rss-reader-4k8ebl]
   workflow_dispatch:
 
@@ -11,40 +21,41 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-${{ github.ref }}
+  group: pages
   cancel-in-progress: true
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-      - run: npm install
-      - run: npx playwright install --with-deps chromium
-      - name: End-to-end test
-        run: |
-          npx http-server -p 8123 -c-1 -s . &
-          for i in $(seq 30); do curl -sf http://localhost:8123/ >/dev/null && break; sleep 1; done
-          node test/e2e.mjs
+env:
+  TEST_BRANCH: claude/mastodon-rss-reader-4k8ebl
 
+jobs:
   deploy:
-    needs: test
-    # Other branches only run the tests; the github-pages environment only
-    # accepts deployments from main.
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
-      - name: Collect site files
+        with:
+          ref: main
+          path: prod
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TEST_BRANCH }}
+          path: test
+      - name: Assemble site
         run: |
-          mkdir _site
-          cp -r index.html styles.css sw.js manifest.webmanifest js icons _site/
+          files="index.html styles.css sw.js manifest.webmanifest js icons"
+          mkdir -p _site/test
+          (cd prod && cp -r $files ../_site/)
+          (cd test && cp -r $files ../_site/test/)
+          # Make the test copy easy to tell apart, including on the home screen.
+          sed -i 's/<html lang="en">/<html lang="en" data-env="test">/; s#<title>Mastorss</title>#<title>Mastorss Test</title>#; s/content="Mastorss">/content="Mastorss Test">/' _site/test/index.html
+          sed -i 's/"name": "Mastorss"/"name": "Mastorss Test"/; s/"short_name": "Mastorss"/"short_name": "Mastorss Test"/' _site/test/manifest.webmanifest
+          # Lets a running app notice a new deploy and reload itself.
+          echo "{\"version\":\"$(git -C prod rev-parse HEAD)\"}" > _site/version.json
+          echo "{\"version\":\"$(git -C test rev-parse HEAD)\"}" > _site/test/version.json
+          echo "prod: $(git -C prod rev-parse --short HEAD)  test: $(git -C test rev-parse --short HEAD)"
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
       - id: deployment

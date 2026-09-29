@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <!-- Also sent as a header by deploy/nginx.conf; the meta copy covers static hosts like GitHub Pages. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * blob:; connect-src https: wss:; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * blob:; connect-src 'self' https: wss:; base-uri 'none'; form-action 'self'">
   <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Mastorss</title>
@@ -118,6 +118,10 @@
     <button id="logout" type="button" class="danger">Log out</button>
     <button id="settings-close" type="button" class="primary">Done</button>
   </dialog>
+
+  <div id="update-bar" role="status" hidden>
+    New version available <button type="button" id="update-reload" class="primary">Reload</button>
+  </div>
 
   <div id="toast" role="alert" hidden></div>
 </body>

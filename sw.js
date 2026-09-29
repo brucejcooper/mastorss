@@ -1,6 +1,8 @@
 // Caches the app shell only. API responses always go to the network so the
 // timeline and read position are never stale.
-const CACHE = 'mastorss-v1';
+// One cache per copy of the app: prod and test live on the same origin and
+// share Cache Storage, so each only manages caches for its own scope.
+const CACHE = `mastorss-v2 ${self.registration.scope}`;
 const SHELL = [
   './',
   './index.html',
@@ -22,7 +24,9 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys
+        .filter((k) => k !== CACHE && (k === 'mastorss-v1' || k.endsWith(` ${self.registration.scope}`)))
+        .map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });

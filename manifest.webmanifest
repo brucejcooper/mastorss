@@ -2,6 +2,7 @@
   "name": "Mastorss",
   "short_name": "Mastorss",
   "description": "Read your Mastodon home timeline oldest to newest, like an RSS reader.",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

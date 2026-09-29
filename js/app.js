@@ -12,10 +12,21 @@ const KEEP_READ_IN_DOM = 30;
 const HISTORY_SIZE = 20; // already-read posts shown above the reading position on load
 const VISIBILITIES = ['public', 'unlisted', 'private', 'direct']; // least to most restrictive
 
+// Keys are scoped to the folder the app is served from, so copies on the
+// same origin (e.g. /mastorss/ and /mastorss/test/) keep separate logins
+// and reading positions. The first read of a key falls back to the
+// unscoped key used by earlier versions, and copies it across.
+const SCOPE = new URL('.', location.href).pathname;
+const scoped = (key) => `${key}@${SCOPE}`;
+
 const store = {
   get(key, fallback = null) {
     try {
-      const v = localStorage.getItem(key);
+      let v = localStorage.getItem(scoped(key));
+      if (v == null) {
+        v = localStorage.getItem(key);
+        if (v != null) localStorage.setItem(scoped(key), v);
+      }
       return v == null ? fallback : JSON.parse(v);
     } catch {
       return fallback;
@@ -23,12 +34,12 @@ const store = {
   },
   set(key, value) {
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(scoped(key), JSON.stringify(value));
     } catch {}
   },
   del(key) {
     try {
-      localStorage.removeItem(key);
+      localStorage.removeItem(scoped(key));
     } catch {}
   },
 };
@@ -50,6 +61,49 @@ function plainText(html) {
   const body = new DOMParser().parseFromString(html || '', 'text/html').body;
   body.querySelectorAll('script, style, template').forEach((n) => n.remove());
   return body.textContent;
+}
+
+// ---------------------------------------------------------------- updates
+// iOS keeps home-screen apps suspended in memory for days, so a deploy isn't
+// picked up until the app is killed. Each deploy writes version.json; we
+// compare it with the one we started with whenever the app comes back to
+// the foreground (and every so often while open). If it changed, reload
+// straight away when nothing is in progress (the reading position is saved,
+// so we land in the same place), otherwise offer a reload button.
+
+const UPDATE_CHECK_MS = 30 * 60_000;
+let loadedVersion = null;
+
+async function fetchVersion() {
+  try {
+    const res = await fetch('version.json', { cache: 'no-store' });
+    return res.ok ? (await res.json()).version : null;
+  } catch {
+    return null;
+  }
+}
+
+function busy() {
+  return !!document.querySelector('dialog[open]') || !!document.querySelector('.overlay:not([hidden])');
+}
+
+async function checkForUpdate() {
+  if (!loadedVersion || document.visibilityState !== 'visible') return;
+  const latest = await fetchVersion();
+  if (!latest || latest === loadedVersion) return;
+  if (!busy()) {
+    location.reload();
+    return;
+  }
+  $('#update-bar').hidden = false;
+}
+
+async function watchForUpdates() {
+  loadedVersion = await fetchVersion();
+  if (!loadedVersion) return; // local development: no version file
+  $('#update-reload').onclick = () => location.reload();
+  document.addEventListener('visibilitychange', checkForUpdate);
+  setInterval(checkForUpdate, UPDATE_CHECK_MS);
 }
 
 // ---------------------------------------------------------------- login
@@ -749,6 +803,7 @@ class Reader {
 
 async function boot() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  watchForUpdates();
 
   const params = new URLSearchParams(location.search);
   if (params.has('code')) {

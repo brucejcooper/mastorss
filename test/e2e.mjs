@@ -170,7 +170,7 @@ for (let i = 0; i < 80; i++) {
 await page.waitForSelector('#end.caught-up');
 await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
 await page.waitForTimeout(200);
-const pos = await page.evaluate(() => JSON.parse(localStorage.getItem('mastorss.pos.mastodon.au.me')));
+const pos = await page.evaluate(() => JSON.parse(localStorage.getItem(`mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`)));
 assert.equal(pos, '1119', 'read to the end');
 assert.equal(await page.textContent('#count'), '0 unread');
 assert.ok((await page.$$('#timeline article')).length < 80, 'old read posts trimmed from DOM');
@@ -225,7 +225,7 @@ await page.click('#menu');
 await page.check('#sync-marker');
 await page.click('#settings-close');
 await page.waitForTimeout(300);
-assert.equal(serverMarker, await page.evaluate(() => JSON.parse(localStorage.getItem('mastorss.pos.mastodon.au.me'))));
+assert.equal(serverMarker, await page.evaluate(() => JSON.parse(localStorage.getItem(`mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`))));
 assert.ok(Number(serverMarker) >= 1119);
 
 // Thread: tapping a post opens the conversation in the app.
@@ -307,5 +307,49 @@ const onScreen = await page.evaluate(() => {
 assert.deepEqual(onScreen, { last: true, end: true }, 'last read posts and the caught-up message both visible');
 
 await page.screenshot({ path: process.env.SHOT || 'test/screenshot.png' });
+
+// Upgrading from a version that stored unscoped keys keeps the login and
+// the reading position.
+const legacy = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
+await mockServer(legacy);
+await legacy.addInitScript(() => {
+  if (sessionStorage.getItem('seeded')) return;
+  sessionStorage.setItem('seeded', '1');
+  localStorage.clear();
+  localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' }));
+  localStorage.setItem('mastorss.pos.mastodon.au.me', JSON.stringify('1100'));
+});
+const old = await legacy.newPage();
+await old.goto(APP);
+await old.waitForSelector('#timeline article:not(.read)');
+assert.equal(await old.$eval('#timeline article:not(.read)', (n) => n.dataset.id), '1101', 'legacy position carried over');
+assert.equal(await old.isVisible('#login'), false, 'still logged in');
+await legacy.close();
+
+// A new deploy is noticed when the app comes back to the foreground: a
+// Reload bar while something is open, a straight reload otherwise.
+const upd = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
+await mockServer(upd);
+let deployed = 'v1';
+await upd.route('**/version.json', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: deployed }) }));
+await upd.addInitScript(() => localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' })));
+const up = await upd.newPage();
+await up.goto(APP);
+await up.waitForSelector('#timeline article');
+await up.click('#open-search');
+deployed = 'v2';
+await up.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+await up.waitForSelector('#update-bar:not([hidden])');
+await up.goBack();
+await up.waitForSelector('#search', { state: 'hidden' });
+await up.evaluate(() => {
+  window.stillOldPage = true;
+  document.dispatchEvent(new Event('visibilitychange'));
+});
+await up.waitForFunction(() => !window.stillOldPage && document.querySelector('#timeline article'));
+await up.waitForTimeout(500);
+assert.equal(await up.isVisible('#update-bar'), false, 'no reload loop after updating');
+await upd.close();
+
 await browser.close();
 console.log('e2e ok');
