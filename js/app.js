@@ -328,10 +328,12 @@ class Reader {
   // On an iOS home-screen app, links to other sites open in an in-app Safari
   // viewer. If that page hands off to another app (YouTube, Mastodon, ...),
   // iOS leaves a blank viewer behind that we can neither detect nor close.
-  // So send those links to Safari proper instead (iOS 17+). If nothing
-  // happens (older iOS), fall back to the normal behaviour.
+  // Optionally (off by default) send those links to Safari proper instead
+  // (iOS 17+). The catch is that the other app's back button then returns to
+  // Safari rather than Mastorss. If nothing happens (older iOS), fall back to
+  // the normal behaviour.
   linksInSafari() {
-    return this.settings.linksInSafari ?? IOS_HOME_SCREEN;
+    return IOS_HOME_SCREEN && this.settings.linksInSafari === true;
   }
 
   bindExternalLinks() {

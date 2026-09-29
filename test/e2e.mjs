@@ -355,9 +355,10 @@ assert.equal(await old.$eval('#timeline article:not(.read)', (n) => n.dataset.id
 assert.equal(await old.isVisible('#login'), false, 'still logged in');
 await legacy.close();
 
-// iOS home-screen app: links to other sites go to Safari (x-safari-https://)
-// rather than the in-app viewer, falling back to a normal open if nothing
-// takes over (as here: Chromium doesn't know the scheme).
+// iOS home-screen app: by default links open normally (the in-app viewer).
+// With "Open links in Safari" on, they go through x-safari-https://, falling
+// back to a normal open if nothing takes over (as here: Chromium doesn't
+// know the scheme).
 const ios = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
 await mockServer(ios);
 await ios.addInitScript(() => {
@@ -370,6 +371,17 @@ const ip = await ios.newPage();
 await ip.goto(APP);
 await ip.waitForSelector('#timeline article .content a.hashtag');
 assert.equal(await ip.evaluate(async () => (await import('./js/render.js')).safariUrl('https://example.com/a?b=1')), 'x-safari-https://example.com/a?b=1');
+await ip.click('#menu');
+assert.equal(await ip.isVisible('#safari-row'), true, 'setting shown on iOS');
+assert.equal(await ip.isChecked('#links-in-safari'), false, 'off by default');
+await ip.click('#settings-close');
+const defaultOpen = ip.waitForEvent('popup');
+await ip.click('#timeline article .content a.hashtag');
+await (await defaultOpen).close(); // a plain new-window open, not intercepted
+assert.deepEqual(await ip.evaluate(() => window.opened), []);
+await ip.click('#menu');
+await ip.check('#links-in-safari');
+await ip.click('#settings-close');
 let popup = false;
 ip.on('popup', () => (popup = true));
 await ip.click('#timeline article .content a.hashtag');
@@ -378,9 +390,6 @@ assert.deepEqual(await ip.evaluate(() => window.opened), [], 'not opened in the 
 await ip.waitForFunction(() => window.opened.length === 1, null, { timeout: 3000 });
 assert.equal(await ip.evaluate(() => window.opened[0]), 'https://mastodon.au/tags/test', 'falls back when Safari does not take over');
 assert.equal(popup, false);
-await ip.click('#menu');
-assert.equal(await ip.isVisible('#safari-row'), true, 'setting shown on iOS');
-assert.equal(await ip.isChecked('#links-in-safari'), true, 'on by default on the home screen');
 await ios.close();
 
 // Pulling up past the end checks for new posts.

@@ -49,7 +49,7 @@ Settings has an optional **"Sync my position through Mastodon's timeline marker"
 ### Things to know
 
 - **Mastodon only keeps about the last 800 posts in each home feed.** If you're away long enough for more than that to arrive, the oldest unread posts are no longer served by the API. Mastorss starts from the oldest post still available, and there's no way to get the rest back.
-- On an iPhone/iPad home-screen app, links to other sites open in Safari itself (iOS 17+), not in the in-app viewer. That viewer leaves a blank "Search or enter website name" page behind when a link hands off to another app, and a web app can't detect or close it. You can switch this off in Settings.
+- On an iPhone/iPad home-screen app, links to other sites open in iOS's in-app viewer. If a link hands off to another app (YouTube, Mastodon, …), that viewer is left blank ("Search or enter website name") when you come back: tap Done to close it. A web app can't detect or close the viewer itself. The Settings option "Open links in Safari" (off by default, iOS 17+) avoids the blank page, but the other app's back button then goes to Safari instead of Mastorss.
 - Composing is deliberately simple: text, content warning and visibility. For media uploads, polls or editing, use ↗ to open the post on your server.
 
 ## Running it
