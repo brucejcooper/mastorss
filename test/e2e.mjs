@@ -220,11 +220,21 @@ await page.waitForTimeout(300);
 assert.equal(Math.round(await anchorTop()), Math.round(top1), 'prepending keeps the view steady');
 assert.deepEqual(await unreadIds(), ['1120', '1121', '1122'], 'older posts stay read');
 
-// Checking shows a spinner until the server answers.
-slowMs = 800;
+// Checking shows a spinner until the server answers. A quick check then
+// says "Fetched" for a second; a slow one just clears.
+const endStatus = () => page.textContent('#end-status');
+slowMs = 300;
+await page.click('#check-new');
+await page.waitForSelector('#end-status .spinner');
+await page.waitForSelector('#end-status.show'); // faded in
+await page.waitForFunction(() => /Fetched · no new posts/.test(document.querySelector('#end-status').textContent));
+await page.waitForFunction(() => document.querySelector('#end-status').textContent === '', null, { timeout: 2500 });
+assert.equal(await page.$('#end-status.show'), null, 'faded out');
+slowMs = 1500;
 await page.click('#check-new');
 await page.waitForSelector('#end-status .spinner');
 await page.waitForSelector('#end-status .spinner', { state: 'detached' });
+assert.equal(await endStatus(), '', 'slow check clears without lingering');
 slowMs = 0;
 
 // A failing load shows Retry and does not hammer the server.
@@ -363,6 +373,9 @@ await tp.evaluate(() => {
 assert.match(await tp.textContent('#pull-hint'), /Release/);
 await tp.evaluate(() => window.dispatchEvent(new TouchEvent('touchend', { touches: [] })));
 await tp.waitForSelector(`#timeline article[data-id="${newest + 1}"]`);
+// The status line settles back to empty after a pull.
+await tp.waitForFunction(() => document.querySelector('#end-status').textContent === '', null, { timeout: 3000 });
+assert.match(await tp.textContent('#pull-hint'), /Pull up/);
 await touch.close();
 
 // A new deploy is noticed when the app comes back to the foreground: a

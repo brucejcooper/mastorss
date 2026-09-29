@@ -8,6 +8,11 @@ const POLL_MS = 5 * 60_000; // how often to look for new posts while the page st
 const MIN_RECHECK_MS = 15_000; // don't re-check more often than this when scrolling to the end
 const STREAM_DEBOUNCE_MS = 1500; // batch bursts of streamed posts into one fetch
 const STREAM_RETRY_MAX_MS = 60_000;
+// A fetch quicker than this shows "Fetched" for FETCHED_SHOW_MS afterwards so
+// it doesn't flash by unnoticed; slower ones just clear when done.
+const QUICK_FETCH_MS = 1000;
+const FETCHED_SHOW_MS = 1000;
+const STATUS_FADE_MS = 300; // matches the #end-status transition
 const KEEP_READ_IN_DOM = 30;
 const HISTORY_SIZE = 20; // already-read posts shown above the reading position on load
 const VISIBILITIES = ['public', 'unlisted', 'private', 'direct']; // least to most restrictive
@@ -190,7 +195,7 @@ class Reader {
     $('#boot').hidden = true;
     $('#login').hidden = true;
     $('#reader').hidden = false;
-    this.setStatus('Loading…', true);
+    this.startBusy('Loading…');
     $('#who').textContent = `@${this.account.acct}@${this.session.instance}`;
     this.bindUi();
     await this.resolvePosition();
@@ -405,7 +410,10 @@ class Reader {
     if (this.loading || (this.caughtUp && !force)) return;
     this.loading = true;
     let ok = false;
-    this.setStatus(this.caughtUp ? 'Checking for new posts…' : 'Loading…', true);
+    let failed = false;
+    let result = 'Fetched';
+    const checking = this.caughtUp;
+    this.startBusy(checking ? 'Checking for new posts…' : 'Loading…');
     $('#retry').hidden = true;
     try {
       const page = await this.client.homeAfter(this.newest, PAGE_SIZE);
@@ -421,25 +429,25 @@ class Reader {
       if (!fresh.length) {
         this.markCaughtUp();
       } else {
-        // New posts are appended above the end block before its spacer
-        // collapses, so they appear where the reader is already looking.
         this.leaveCaughtUp();
-        this.setStatus('');
       }
+      if (checking) result = fresh.length ? `Fetched ${fresh.length} new post${fresh.length === 1 ? '' : 's'}` : 'Fetched · no new posts';
       this.updateCount();
       this.trackRead();
       ok = true;
     } catch (err) {
       if (background) {
         console.warn('Background check failed', err);
-        this.setStatus('');
         $('#last-checked').textContent = "Couldn't check for new posts, will try again shortly.";
         this.schedulePoll();
       } else {
+        failed = true;
         this.handleError(err);
       }
     } finally {
       this.loading = false;
+      // Always settle the status line, whatever happened above.
+      if (!failed) this.endBusy(result);
     }
     // Keep going while the end is close (but never retry in a loop).
     if (ok && !this.caughtUp && this.end.getBoundingClientRect().top < window.innerHeight + 2000) await this.loadMore();
@@ -526,10 +534,7 @@ class Reader {
     window.addEventListener('touchend', () => {
       const go = armed;
       reset();
-      if (go) {
-        hint.textContent = 'Checking…';
-        this.checkForNew().finally(() => (hint.textContent = 'Pull up to check for new posts'));
-      }
+      if (go) this.checkForNew();
     });
     window.addEventListener('touchcancel', reset);
   }
@@ -537,7 +542,6 @@ class Reader {
   markCaughtUp() {
     this.caughtUp = true;
     this.end.classList.add('caught-up');
-    this.setStatus('');
     const time = new Date(this.lastChecked || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     $('#last-checked').textContent = this.stream?.readyState === WebSocket.OPEN
       ? 'New posts will appear here as they arrive.'
@@ -564,8 +568,34 @@ class Reader {
     return this.loadMore({ force: true, background });
   }
 
+  // The status line fades in and out (see #end-status in styles.css). Its
+  // contents are only removed once the fade-out has finished, and any new
+  // status cancels a pending fade.
   setStatus(text, busy = false) {
-    $('#end-status').replaceChildren(...(busy ? busyText(text) : [text]));
+    clearTimeout(this.statusTimer);
+    clearTimeout(this.fadeTimer);
+    const line = $('#end-status');
+    if (!text) {
+      line.classList.remove('show');
+      this.fadeTimer = setTimeout(() => line.replaceChildren(), STATUS_FADE_MS);
+      return;
+    }
+    line.replaceChildren(...(busy ? busyText(text) : [text]));
+    requestAnimationFrame(() => line.classList.add('show'));
+  }
+
+  startBusy(text) {
+    this.busySince = performance.now();
+    this.setStatus(text, true);
+  }
+
+  endBusy(done) {
+    if (performance.now() - this.busySince >= QUICK_FETCH_MS) {
+      this.setStatus('');
+      return;
+    }
+    this.setStatus(`✓ ${done}`);
+    this.statusTimer = setTimeout(() => this.setStatus(''), FETCHED_SHOW_MS);
   }
 
   // A post counts as read once its bottom edge has scrolled up under the header.

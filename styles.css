@@ -214,7 +214,9 @@ details.cw.filtered > summary { color: var(--muted); font-weight: 400; }
 .pull-hint { font-size: 0.8rem; opacity: 0.6; transition: opacity 0.2s, transform 0.2s; }
 #end.pulling .pull-hint { opacity: 1; transform: scale(1.05); color: var(--accent); }
 /* Fixed height so a spinner appearing here never shifts the posts above. */
-#end-status { height: 1.5rem; margin: 0 0 0.5rem; }
+#end-status { height: 1.5rem; margin: 0 0 0.5rem; opacity: 0; transform: translateY(4px); transition: opacity 0.3s ease, transform 0.3s ease; }
+#end-status.show { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { #end-status { transition: none; transform: none; } }
 
 /* ---------- settings + toast */
 
