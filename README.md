@@ -28,6 +28,7 @@ Summary: Ivory, Ice Cubes and Mona all remember your spot, but they all read upw
 
 - **Login**: OAuth authorization-code flow with PKCE. The app registers itself with your server on first login (`POST /api/v1/apps`), using the URL it's served from as the redirect URI. Scopes: `read write:favourites write:statuses write:bookmarks` (the `write:statuses` scope is only used for boosts).
 - **Reading**: `GET /api/v1/timelines/home?min_id=<marker>` returns the page directly after the marker. That page is reversed to oldest-first, and each next page is fetched after the newest post loaded so far.
+- **Keeping up**: it keeps loading pages as you scroll. It only says you're caught up when the server returns an empty page, since Mastodon returns short pages mid-timeline when it drops deleted or muted posts. Once you're caught up it checks for new posts when you come back to the app, when you scroll to the end, every 5 minutes while the page stays open, or when you tap "Check now".
 - **Marker**: stored per account in `localStorage` and saved as you scroll. Read posts are pruned from the page as you go so long sessions stay light.
 - **Filters**: server-side filters are respected. "Hide" filters drop the post, "warn" filters collapse it.
 - **Content**: remote HTML is run through an allowlist sanitiser. The nginx config adds a CSP as a second layer.

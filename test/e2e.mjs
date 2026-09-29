@@ -78,7 +78,9 @@ async function mockServer(ctx) {
         if (failTimeline) return json(route, { error: 'boom' }, 503);
         const limit = Number(url.searchParams.get('limit'));
         const min = url.searchParams.get('min_id');
-        const newer = min ? posts.filter((p) => Number(p.id) > Number(min)).slice(0, limit) : posts.slice(-limit);
+        // Real servers return short pages mid-timeline (deleted/muted posts are
+        // dropped after the limit), so never fill a page completely.
+        const newer = min ? posts.filter((p) => Number(p.id) > Number(min)).slice(0, limit - 3) : posts.slice(-limit);
         return json(route, [...newer].reverse());
       }
       default:
@@ -93,6 +95,9 @@ const ctx = await browser.newContext({ viewport: { width: 390, height: 800 }, se
 await mockServer(ctx);
 const page = await ctx.newPage();
 page.on('pageerror', (e) => console.error('pageerror', e));
+
+// Fake timers (still running in real time) so the 5 minute poll can be fast-forwarded.
+await page.clock.install();
 
 // Login
 await page.goto(APP);
@@ -129,10 +134,13 @@ assert.equal(await page.textContent('#count'), '0 unread');
 assert.ok((await page.$$('article.status')).length < 80, 'old read posts trimmed from DOM');
 assert.deepEqual(markerPosts, [], 'server marker untouched while sync is off');
 
-// New posts arrive; check for new.
+assert.match(await page.textContent('#last-checked'), /automatically/);
+
+// New posts arrive and are picked up by the background poll, no button needed.
 posts.push(status(1120), status(1121));
-await page.click('#check-new');
+await page.clock.runFor(5 * 60_000 + 1000);
 await page.waitForSelector('article[data-id="1121"]');
+await page.waitForSelector('#end.caught-up');
 
 // Reload: resumes after position; nothing older is shown.
 await page.reload();

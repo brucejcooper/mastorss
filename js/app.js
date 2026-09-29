@@ -4,6 +4,8 @@ import { renderStatus } from './render.js';
 const $ = (sel) => document.querySelector(sel);
 const DEFAULT_INSTANCE = 'mastodon.au';
 const PAGE_SIZE = 40;
+const POLL_MS = 5 * 60_000; // how often to look for new posts while the page stays open
+const MIN_RECHECK_MS = 15_000; // don't re-check more often than this when scrolling to the end
 const KEEP_READ_IN_DOM = 30;
 
 const store = {
@@ -94,6 +96,7 @@ class Reader {
     this.newest = null; // id of the newest post loaded into the page
     this.loading = false;
     this.caughtUp = false;
+    this.lastChecked = 0;
     this.readCursor = 0; // index into the list of the first article not yet marked read
     this.serverDirty = false;
 
@@ -110,7 +113,9 @@ class Reader {
     await this.loadMore();
     // Only start infinite loading once we know where the reader is up to.
     new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) this.loadMore();
+      if (!entries.some((e) => e.isIntersecting)) return;
+      if (!this.caughtUp) this.loadMore();
+      else if (Date.now() - this.lastChecked > MIN_RECHECK_MS) this.checkForNew({ background: true });
     }, { rootMargin: '0px 0px 2000px 0px' }).observe(this.end);
   }
 
@@ -143,12 +148,12 @@ class Reader {
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') this.flushMarker(true);
-      else if (this.caughtUp) this.checkForNew();
+      else if (this.caughtUp) this.checkForNew({ background: true });
     });
     window.addEventListener('pagehide', () => this.flushMarker(true));
 
     $('#check-new').onclick = () => this.checkForNew();
-    $('#retry').onclick = () => this.loadMore();
+    $('#retry').onclick = () => this.loadMore({ force: true });
     $('#refresh').onclick = () => (this.caughtUp ? this.checkForNew() : this.nextPost());
     $('#menu').onclick = () => this.openSettings();
 
@@ -176,36 +181,48 @@ class Reader {
     else this.end.scrollIntoView({ behavior: 'smooth' });
   }
 
-  async loadMore() {
-    if (this.loading || this.caughtUp) return;
+  // Loads the next page after the newest post shown. Only an empty page means
+  // we have reached the end: Mastodon drops deleted/muted posts after applying
+  // the limit, so short pages are normal in the middle of the timeline.
+  async loadMore({ force = false, background = false } = {}) {
+    if (this.loading || (this.caughtUp && !force)) return;
     this.loading = true;
     let ok = false;
-    this.setStatus('Loading…');
+    if (!background) this.setStatus('Loading…');
     $('#retry').hidden = true;
     try {
       const page = await this.client.homeAfter(this.newest, PAGE_SIZE);
-      if (!this.newest && !page.length) {
-        this.markCaughtUp();
-        return;
-      }
-      // With no saved position this is simply the most recent page.
+      this.lastChecked = Date.now();
+      // With no saved position the first page is simply the most recent posts.
       const fresh = page.filter((s) => compareIds(s.id, this.newest) > 0);
       for (const entry of fresh) {
         const node = renderStatus(entry, { instance: this.session.instance, client: this.client });
         if (node) this.list.append(node);
         this.newest = entry.id;
       }
-      if (fresh.length < PAGE_SIZE) this.markCaughtUp();
-      else this.setStatus('');
+      if (!fresh.length) {
+        this.markCaughtUp();
+      } else {
+        // New posts are appended above the end block before its spacer
+        // collapses, so they appear where the reader is already looking.
+        this.leaveCaughtUp();
+        this.setStatus('');
+      }
       this.updateCount();
       this.trackRead();
       ok = true;
     } catch (err) {
-      this.handleError(err);
+      if (background) {
+        console.warn('Background check failed', err);
+        $('#last-checked').textContent = "Couldn't check for new posts, will try again shortly.";
+        this.schedulePoll();
+      } else {
+        this.handleError(err);
+      }
     } finally {
       this.loading = false;
     }
-    // If the page did not fill the screen, keep going (but never retry in a loop).
+    // Keep going while the end is close (but never retry in a loop).
     if (ok && !this.caughtUp && this.end.getBoundingClientRect().top < window.innerHeight + 2000) this.loadMore();
   }
 
@@ -213,14 +230,28 @@ class Reader {
     this.caughtUp = true;
     this.end.classList.add('caught-up');
     this.setStatus('');
+    const time = new Date(this.lastChecked || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    $('#last-checked').textContent = `New posts will appear here automatically. Last checked ${time}.`;
     this.updateCount();
+    this.schedulePoll();
   }
 
-  async checkForNew() {
+  leaveCaughtUp() {
     this.caughtUp = false;
     this.end.classList.remove('caught-up');
-    await this.loadMore();
-    if (this.readCursor < this.articles().length) this.nextPost();
+    clearTimeout(this.pollTimer);
+  }
+
+  schedulePoll() {
+    clearTimeout(this.pollTimer);
+    this.pollTimer = setTimeout(() => {
+      // While hidden, visibilitychange triggers the next check instead.
+      if (document.visibilityState === 'visible') this.checkForNew({ background: true });
+    }, POLL_MS);
+  }
+
+  checkForNew({ background = false } = {}) {
+    return this.loadMore({ force: true, background });
   }
 
   setStatus(text) {
