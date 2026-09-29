@@ -130,15 +130,18 @@ function media(attachments, sensitive) {
   for (const m of attachments) {
     const alt = m.description || '';
     let item;
+    // Reserve the space before the image loads, so posts don't jump around.
+    const size = m.meta?.small || m.meta?.original || {};
+    const dims = size.width && size.height ? { width: size.width, height: size.height } : {};
     if (m.type === 'image') {
       const full = safeUrl(m.url) || safeUrl(m.remote_url);
       item = el('a', { href: full, target: '_blank', rel: 'noopener noreferrer' },
-        el('img', { src: safeUrl(m.preview_url) || full, alt, title: alt, loading: 'lazy' }));
+        el('img', { src: safeUrl(m.preview_url) || full, alt, title: alt, loading: 'lazy', ...dims }));
     } else if (m.type === 'gifv') {
-      item = el('video', { src: safeUrl(m.url), autoplay: true, loop: true, muted: true, playsinline: true, 'aria-label': alt });
+      item = el('video', { src: safeUrl(m.url), autoplay: true, loop: true, muted: true, playsinline: true, 'aria-label': alt, ...dims });
       item.muted = true;
     } else if (m.type === 'video') {
-      item = el('video', { src: safeUrl(m.url), controls: true, preload: 'none', poster: safeUrl(m.preview_url), playsinline: true, 'aria-label': alt });
+      item = el('video', { src: safeUrl(m.url), controls: true, preload: 'none', poster: safeUrl(m.preview_url), playsinline: true, 'aria-label': alt, ...dims });
     } else if (m.type === 'audio') {
       item = el('audio', { src: safeUrl(m.url), controls: true, preload: 'none' });
     } else {
@@ -234,15 +237,25 @@ function actionButton(label, icon, count, active, onToggle) {
   return btn;
 }
 
-// Returns an <article> for a home timeline entry, or null if a filter hides it.
-export function renderStatus(entry, { instance, client }) {
+// Clicks on these open their own thing rather than the thread.
+const INTERACTIVE = 'a, button, summary, details.cw:not([open]), video, audio, input, textarea';
+
+// Returns an <article> for a timeline entry, or null if a filter hides it.
+// `onThread(status)` opens the conversation, `onReply(status)` the composer.
+export function renderStatus(entry, { instance, client, onThread, onReply, focus = false, depth = 0 }) {
   const s = entry.reblog || entry;
   const f = filterHit(s);
   if (f.hide) return null;
   const links = homeLinks(instance);
   const a = s.account;
+  const openThread = (e) => {
+    // Let modified clicks open the link in a new tab as normal.
+    if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return;
+    if (e) e.preventDefault();
+    onThread?.(s);
+  };
 
-  const article = el('article', { class: 'status', 'data-id': entry.id });
+  const article = el('article', { class: `status${focus ? ' focus' : ''}${depth ? ` depth d${Math.min(depth, 5)}` : ''}`, 'data-id': entry.id });
   if (entry.reblog) {
     article.append(el('div', { class: 'boosted-by' }, '🔁 ',
       el('a', { href: links.account(entry.account.acct), target: '_blank', rel: 'noopener noreferrer' },
@@ -257,12 +270,13 @@ export function renderStatus(entry, { instance, client }) {
       el('a', { href: links.account(a.acct), target: '_blank', rel: 'noopener noreferrer' },
         el('strong', {}, plainWithEmoji(a.display_name || a.username, a.emojis))),
       el('small', { text: `@${a.acct}` })),
-    el('a', { class: 'time', href: links.status(s), target: '_blank', rel: 'noopener noreferrer', title: new Date(s.created_at).toLocaleString(), text: relTime(s.created_at) }));
+    el('a', { class: 'time', href: links.status(s), title: new Date(s.created_at).toLocaleString(), text: focus ? new Date(s.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : relTime(s.created_at), onclick: openThread }));
   article.append(header);
 
-  if (s.in_reply_to_id) {
+  if (s.in_reply_to_id && !depth && !focus) {
     const target = s.mentions.find((m) => m.id === s.in_reply_to_account_id);
-    article.append(el('div', { class: 'reply-to', text: s.in_reply_to_account_id === a.id ? '↩ Thread continues' : `↩ Replying to @${target ? target.acct : '…'}` }));
+    article.append(el('a', { class: 'reply-to', href: links.status(s), onclick: openThread,
+      text: s.in_reply_to_account_id === a.id ? '↩ Thread continues · show thread' : `↩ Replying to @${target ? target.acct : '…'} · show thread` }));
   }
 
   let body = statusBody(s, links);
@@ -279,10 +293,37 @@ export function renderStatus(entry, { instance, client }) {
   const bookmark = actionButton('Bookmark', '🔖', 0, s.bookmarked, (on) => client.toggle(s.id, 'bookmark', on));
 
   article.append(el('footer', {},
-    el('a', { class: 'act', href: links.status(s), target: '_blank', rel: 'noopener noreferrer', title: 'Reply / open thread on your server' },
+    el('button', { type: 'button', class: 'act', 'aria-label': 'Reply', title: 'Reply', onclick: () => onReply?.(s) },
       el('span', { class: 'icon', text: '💬' }), el('span', { class: 'count', text: s.replies_count ? String(s.replies_count) : '' })),
     boost, fav, bookmark,
-    s.url ? el('a', { class: 'act', href: safeUrl(s.url), target: '_blank', rel: 'noopener noreferrer', title: 'Open original' }, el('span', { class: 'icon', text: '↗' })) : null));
+    el('a', { class: 'act', href: links.status(s), target: '_blank', rel: 'noopener noreferrer', title: `Open on ${instance}`, 'aria-label': `Open on ${instance}` }, el('span', { class: 'icon', text: '↗' }))));
+
+  // Tapping the post itself (not a link or button in it) opens the thread.
+  if (!focus) {
+    article.addEventListener('click', (e) => {
+      if (e.target.closest(INTERACTIVE) || getSelection().toString()) return;
+      openThread();
+    });
+  }
   return article;
 }
 
+// A row for an account in search results; opens the profile on the home
+// server, where following/unfollowing happens.
+export function renderAccount(acc, { instance }) {
+  const href = homeLinks(instance).account(acc.acct);
+  return el('a', { class: 'account-row', href, target: '_blank', rel: 'noopener noreferrer' },
+    el('img', { src: safeUrl(acc.avatar_static || acc.avatar), alt: '', loading: 'lazy' }),
+    el('div', { class: 'who' },
+      el('strong', {}, plainWithEmoji(acc.display_name || acc.username, acc.emojis)),
+      el('small', { text: `@${acc.acct} · ${acc.followers_count ?? 0} followers` })));
+}
+
+export function renderTag(tag, { instance }) {
+  const uses = (tag.history || []).slice(0, 7).reduce((n, d) => n + Number(d.uses || 0), 0);
+  return el('a', { class: 'tag-row', href: homeLinks(instance).tag(tag.name), target: '_blank', rel: 'noopener noreferrer' },
+    el('strong', { text: `#${tag.name}` }),
+    el('small', { text: uses ? `${uses} posts this week` : '' }));
+}
+
+export { el };

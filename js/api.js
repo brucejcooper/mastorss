@@ -118,13 +118,14 @@ export class Client {
     this.token = token;
   }
 
-  async request(path, { method = 'GET', body, keepalive = false } = {}) {
+  async request(path, { method = 'GET', body, keepalive = false, headers = {} } = {}) {
     const res = await fetch(`https://${this.instance}${path}`, {
       method,
       keepalive,
       headers: {
         Authorization: `Bearer ${this.token}`,
         ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...headers,
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -149,6 +150,12 @@ export class Client {
     return page.reverse();
   }
 
+  // Posts strictly older than `beforeId`, returned oldest first.
+  async homeBefore(beforeId, limit = 20) {
+    const page = await this.request(`/api/v1/timelines/home?${new URLSearchParams({ limit, max_id: beforeId })}`);
+    return page.reverse();
+  }
+
   async latestHomeId() {
     const [s] = await this.request('/api/v1/timelines/home?limit=1');
     return s ? s.id : null;
@@ -163,10 +170,55 @@ export class Client {
     return this.request('/api/v1/markers', { method: 'POST', body: { home: { last_read_id: id } }, keepalive });
   }
 
+  context(statusId) {
+    return this.request(`/api/v1/statuses/${statusId}/context`);
+  }
+
+  search(q) {
+    return this.request(`/api/v2/search?${new URLSearchParams({ q, resolve: 'true', limit: 20 })}`);
+  }
+
+  instanceInfo() {
+    this.info ??= this.request('/api/v2/instance').catch(() => ({}));
+    return this.info;
+  }
+
+  async maxChars() {
+    return (await this.instanceInfo()).configuration?.statuses?.max_characters || 500;
+  }
+
+  // Real-time stream of the home timeline. The token goes in the WebSocket
+  // subprotocol (which Mastodon accepts) rather than the URL, so it doesn't
+  // end up in server logs.
+  async openStream() {
+    const base = (await this.instanceInfo()).configuration?.urls?.streaming || `wss://${this.instance}`;
+    return new WebSocket(`${base.replace(/\/$/, '')}/api/v1/streaming?stream=user`, this.token);
+  }
+
+  // `idempotencyKey` stops a retried or double-tapped submit posting twice.
+  post({ status, inReplyToId, visibility, spoilerText, idempotencyKey }) {
+    return this.request('/api/v1/statuses', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: {
+        status,
+        in_reply_to_id: inReplyToId || undefined,
+        visibility,
+        spoiler_text: spoilerText || undefined,
+        sensitive: !!spoilerText,
+      },
+    });
+  }
+
   toggle(statusId, action, on) {
     const verb = { favourite: ['favourite', 'unfavourite'], reblog: ['reblog', 'unreblog'], bookmark: ['bookmark', 'unbookmark'] }[action];
     return this.request(`/api/v1/statuses/${statusId}/${on ? verb[0] : verb[1]}`, { method: 'POST' });
   }
+}
+
+// The id just above `id`, so `max_id` (which is exclusive) includes `id` itself.
+export function nextId(id) {
+  return (BigInt(id) + 1n).toString();
 }
 
 // Mastodon IDs are numeric strings that may exceed 2^53, so compare as strings.

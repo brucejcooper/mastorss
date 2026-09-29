@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <!-- Also sent as a header by deploy/nginx.conf; the meta copy covers static hosts like GitHub Pages. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * blob:; connect-src https:; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * blob:; connect-src https: wss:; base-uri 'none'; form-action 'self'">
   <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Mastorss</title>
@@ -45,9 +45,12 @@
         <strong id="count"></strong>
         <small id="who"></small>
       </div>
+      <button id="open-search" type="button" aria-label="Search" title="Search (/)">🔍</button>
+      <button id="open-compose" type="button" aria-label="New post" title="New post (n)">✎</button>
       <button id="refresh" type="button" aria-label="Next post" title="Next post (j)">⌄</button>
     </header>
 
+    <div id="older"><p id="older-status"></p></div>
     <main id="timeline"></main>
 
     <div id="end">
@@ -60,6 +63,48 @@
       </div>
     </div>
   </section>
+
+  <section id="thread" class="overlay" hidden aria-label="Thread">
+    <header class="overlay-bar">
+      <button type="button" class="back" aria-label="Back">‹</button>
+      <strong>Thread</strong>
+    </header>
+    <div id="thread-body" class="overlay-body"></div>
+  </section>
+
+  <section id="search" class="overlay" hidden aria-label="Search">
+    <header class="overlay-bar">
+      <button type="button" class="back" aria-label="Back">‹</button>
+      <form id="search-form" role="search">
+        <input id="search-q" type="search" enterkeyhint="search" autocapitalize="off" spellcheck="false"
+               placeholder="People, #hashtags, posts or @user@server">
+      </form>
+    </header>
+    <div id="search-results" class="overlay-body">
+      <p class="hint pad">Search finds people and hashtags anywhere, and posts you've written, favourited, boosted or been mentioned in. Tapping a person opens their profile on your server, where you can follow them.</p>
+    </div>
+  </section>
+
+  <dialog id="compose">
+    <form id="compose-form">
+      <div id="compose-context" class="hint"></div>
+      <input id="compose-cw" placeholder="Content warning (optional)" autocomplete="off">
+      <textarea id="compose-text" rows="7" placeholder="What's on your mind?" required></textarea>
+      <div class="compose-row">
+        <select id="compose-visibility" aria-label="Visibility">
+          <option value="public">🌐 Public</option>
+          <option value="unlisted">🔓 Quiet public</option>
+          <option value="private">🔒 Followers only</option>
+          <option value="direct">✉️ Mentioned people only</option>
+        </select>
+        <span id="compose-count"></span>
+      </div>
+      <div class="compose-row">
+        <button type="button" id="compose-cancel">Cancel</button>
+        <button type="submit" id="compose-send" class="primary">Post</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="settings">
     <h2>Settings</h2>
