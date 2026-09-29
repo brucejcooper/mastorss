@@ -51,6 +51,21 @@ npm start   # serves on http://localhost:8123
 
 `localhost` counts as a secure origin, so login and the service worker work without HTTPS.
 
+### On GitHub Pages (for testing)
+
+`.github/workflows/pages.yml` runs the e2e test, then publishes the app to `https://brucejcooper.github.io/mastorss/` on every push to `main` or the development branch.
+
+One-time setup:
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.** Pages on a private repo needs a paid GitHub plan. Otherwise make the repo public.
+2. The `github-pages` environment only lets `main` deploy by default. To deploy from another branch, add it under **Settings → Environments → github-pages → Deployment branches**. Otherwise merge to `main`.
+3. Re-run the workflow (Actions → Deploy to GitHub Pages → Run workflow).
+
+Notes:
+- GitHub Pages can't set headers, so the CSP is also in a `<meta>` tag in `index.html`.
+- Every Pages site under `brucejcooper.github.io` shares one origin, and therefore one `localStorage`. Your login token and reading position are readable by your other Pages sites. That's fine for testing, and another reason to self-host for real use.
+- Logging in at the Pages URL registers a separate app with mastodon.au. When you move to the home server you'll log in again there, and the reading position starts fresh unless marker sync is on.
+
 ### On your home server
 
 PWAs need **HTTPS** (for the service worker, `crypto.subtle` for PKCE, and "Add to Home Screen" as an app). Any static file server works. A Docker image with nginx is included:
