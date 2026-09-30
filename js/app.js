@@ -1093,7 +1093,7 @@ class Reader {
 
   diagnosticsText() {
     const state = {
-      app: `${versionLabel()}${document.documentElement.dataset.env === 'test' ? ' (test)' : ''}`,
+      app: versionLabel(),
       copied: new Date().toString(),
       device: navigator.userAgent,
       homeScreen: navigator.standalone === true || matchMedia('(display-mode: standalone)').matches,

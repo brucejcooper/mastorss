@@ -71,24 +71,16 @@ npm start   # serves on http://localhost:8123
 
 `localhost` counts as a secure origin, so login and the service worker work without HTTPS.
 
-### On GitHub Pages: prod and test
+### On GitHub Pages
 
-The workflows publish two copies of the app to one Pages site:
-
-| | URL | Updated from | When |
-|---|---|---|---|
-| **Prod** | `https://brucejcooper.github.io/mastorss/` | `main` | only when something is merged to `main` |
-| **Test** | `https://brucejcooper.github.io/mastorss/test/` | the development branch | on every push to it |
+`https://brucejcooper.github.io/mastorss/` is published from `main`:
 
 - `.github/workflows/ci.yml` runs the e2e test on every push.
-- `.github/workflows/pages.yml` runs after CI passes on `main` or the development branch. It checks out both branches and publishes `main` at the root and the development branch under `/test/`. It runs as a `workflow_run` job, which GitHub runs as the default branch, so the `github-pages` environment accepts it and a push to the development branch can update test without touching `main`.
-- The test copy has an orange bar, shows "TEST" under your handle, and is called "Mastorss Test" on the home screen, so you can install both side by side.
-- Both copies share one origin, so each keeps its own login, reading position, settings and offline cache, all scoped by folder. Reading on test never moves your place on prod. On first load, each copy copies the unscoped keys from earlier versions, so upgrading keeps you logged in at the same spot.
-- Each copy registers its own app with mastodon.au, because the redirect URL differs.
+- `.github/workflows/pages.yml` runs once CI passes on `main` and publishes it. It runs as a `workflow_run` job, which GitHub runs as the default branch, so the `github-pages` environment accepts it.
 
 Notes:
 - GitHub Pages can't set headers, so the CSP is also in a `<meta>` tag in `index.html`.
-- Every Pages site under `brucejcooper.github.io` shares one origin and therefore one `localStorage`, so your other Pages sites could read the token. That's another reason to self-host for real use.
+- Every Pages site under `brucejcooper.github.io` shares one origin and therefore one `localStorage`, so your other Pages sites could read the token. That's another reason to self-host for real use. Storage keys are scoped by folder (`…@/mastorss/`), so copies served from different folders on the same origin don't share a login or position.
 
 ### Updates
 

@@ -299,11 +299,6 @@ dialog > button.danger { color: var(--danger); }
 #compose-count.over { color: var(--danger); font-weight: 700; }
 #compose-context:empty { display: none; }
 
-/* ---------- test deployment marker (set by the Pages workflow) */
-
-[data-env="test"] #bar, [data-env="test"] .overlay-bar { border-bottom: 3px solid #f08c00; }
-[data-env="test"] .bar-title small::after { content: " · TEST"; color: #f08c00; font-weight: 700; }
-
 /* ---------- new version available */
 
 #update-bar {
