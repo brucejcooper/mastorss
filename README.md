@@ -44,7 +44,16 @@ Summary: Ivory, Ice Cubes and Mona all remember your spot, but they all read upw
 
 ### Syncing between devices
 
-Settings has an optional **"Sync my position through Mastodon's timeline marker"** switch. It's off by default, because other clients write to the same marker. In particular, Mastodon's own web UI resets it to the newest post when it loads, which would make Mastorss skip everything you hadn't read. Turn it on if you read Mastorss on more than one device and don't use the Mastodon web UI. When it's on, Mastorss uses whichever position is further along, local or server.
+Settings has an optional **"Sync my position across devices"** switch. Your position is kept in a **private note on your own Mastodon account**: the note Mastodon lets you attach to any account, which only you can see. Mastorss writes one line to it, `mastorss:{"home":"<post id>"}`, and leaves anything else in the note alone.
+
+Why not Mastodon's timeline marker, which is built for this? Every client writes to it. Mastodon's own web UI, for example, sets it to the newest post whenever it's active, so a sleeping laptop tab could make Mastorss skip everything you hadn't read. No other client touches account notes.
+
+- **On startup**, Mastorss uses whichever is further along: this device's position or the note's.
+- **As you read**, it saves a few seconds after you move on, and when you switch away. It re-reads the note first, so a device that has read further is never moved back.
+- **The note needs the `write:accounts` permission**, which versions before note sync didn't ask for. If you logged in before then, Settings shows a "Log in again" button.
+- **If your server refuses a note on your own account**, Mastorss uses the note on your server's contact account instead (from `/api/v2/instance`). Every device follows the same rule, so they all find the same note.
+
+The timeline marker is still read once, on a device's very first run when nothing is saved yet. Mastorss never writes it.
 
 ### Things to know
 

@@ -112,10 +112,12 @@
   <dialog id="settings">
     <h2>Settings</h2>
     <label class="row">
-      <input type="checkbox" id="sync-marker">
-      <span>Sync my position through Mastodon's timeline marker
-        <small>Lets other devices running Mastorss pick up where you left off. Other apps (including Mastodon's own web interface) may overwrite this marker and make you skip posts, so leave it off unless you need it.</small></span>
+      <input type="checkbox" id="sync-note">
+      <span>Sync my position across devices
+        <small>Keeps your place in a private note on your Mastodon account that only you can see, so other devices running Mastorss pick up where you left off. Other Mastodon apps never touch it.</small></span>
     </label>
+    <p class="hint"><span id="sync-info"></span>
+      <button type="button" id="sync-login" class="linklike" hidden>Log in again</button></p>
     <label class="row" id="safari-row" hidden>
       <input type="checkbox" id="links-in-safari">
       <span>Open links in Safari

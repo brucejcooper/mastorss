@@ -34,6 +34,11 @@ function status(id) {
 }
 
 let serverMarker = '1010';
+// Private notes on accounts, keyed by account id. Flags simulate a server that
+// won't take a note on your own account, and a login missing write:accounts.
+let notes = {};
+let rejectSelfNote = false;
+let noteScopeMissing = false;
 const posted = [];
 let failTimeline = false;
 let slowMs = 0;
@@ -69,7 +74,11 @@ async function mockServer(ctx) {
       case '/api/v1/accounts/verify_credentials':
         return json(route, { id: 'me', acct: 'bruce', source: { privacy: 'public' } });
       case '/api/v2/instance':
-        return json(route, { configuration: { statuses: { max_characters: 500 }, urls: { streaming: 'wss://streaming.mastodon.au' } } });
+        return json(route, { configuration: { statuses: { max_characters: 500 }, urls: { streaming: 'wss://streaming.mastodon.au' } }, contact: { account: { id: 'admin' } } });
+      case '/api/v1/accounts/relationships': {
+        const id = url.searchParams.get('id[]');
+        return json(route, [{ id, note: notes[id] ?? '' }]);
+      }
       case '/api/v2/search':
         return json(route, {
           accounts: [acct(1)],
@@ -102,6 +111,13 @@ async function mockServer(ctx) {
         return json(route, [...result].reverse());
       }
       default: {
+        const noteMatch = url.pathname.match(/^\/api\/v1\/accounts\/(\w+)\/note$/);
+        if (noteMatch && req.method() === 'POST') {
+          if (noteScopeMissing) return json(route, { error: 'This action is outside the authorized scopes' }, 403);
+          if (rejectSelfNote && noteMatch[1] === 'me') return json(route, { error: 'Validation failed' }, 422);
+          notes[noteMatch[1]] = JSON.parse(req.postData()).comment;
+          return json(route, { id: noteMatch[1], note: notes[noteMatch[1]] });
+        }
         const ctxMatch = url.pathname.match(/^\/api\/v1\/statuses\/(\d+)\/context$/);
         if (ctxMatch) {
           return json(route, {
@@ -248,14 +264,15 @@ failTimeline = false;
 await page.click('#retry');
 await page.waitForSelector('#end.caught-up');
 
-// Turn marker sync on and confirm it is written.
+// Turn sync on: the position is saved to a private note on your own account.
 await page.click('#menu');
 assert.equal(await page.isVisible('#safari-row'), false, 'Safari setting only on iOS');
-await page.check('#sync-marker');
+await page.check('#sync-note');
+await page.waitForFunction(() => /your account/.test(document.querySelector('#sync-info').textContent));
 await page.click('#settings-close');
-await page.waitForTimeout(300);
-assert.equal(serverMarker, await page.evaluate(() => JSON.parse(localStorage.getItem(`mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`))));
-assert.ok(Number(serverMarker) >= 1119);
+const localPos = await page.evaluate(() => JSON.parse(localStorage.getItem(`mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`)));
+assert.equal(notes.me, `mastorss:{"home":"${localPos}"}`, 'position saved in the note');
+assert.ok(Number(localPos) >= 1119);
 
 // Thread: tapping a post opens the conversation in the app.
 await page.evaluate(() => document.querySelector('#timeline article[data-id="1120"]').scrollIntoView());
@@ -355,6 +372,61 @@ assert.equal(await old.$eval('#timeline article:not(.read)', (n) => n.dataset.id
 assert.equal(await old.isVisible('#login'), false, 'still logged in');
 await legacy.close();
 
+// Timeline markers are never written: other apps can't be confused by
+// Mastorss, and Mastorss no longer follows what they do to the marker.
+assert.deepEqual(markerPosts, [], 'server marker never written');
+
+// A second device with sync on picks up the note's position when it's
+// further along than its own.
+const device = async (settings, pos) => {
+  const c = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
+  await mockServer(c);
+  await c.addInitScript(([settings, pos]) => {
+    if (sessionStorage.getItem('seeded')) return;
+    sessionStorage.setItem('seeded', '1');
+    localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' }));
+    localStorage.setItem('mastorss.settings.mastodon.au.me', JSON.stringify(settings));
+    if (pos) localStorage.setItem('mastorss.pos.mastodon.au.me', JSON.stringify(pos));
+  }, [settings, pos]);
+  const p = await c.newPage();
+  await p.goto(APP);
+  await p.waitForSelector('#timeline article');
+  return { c, p };
+};
+notes = { me: 'mastorss:{"home":"1100"}' };
+let d = await device({ syncNote: true }, '1050');
+assert.equal(await d.p.$eval('#timeline article:not(.read)', (n) => n.dataset.id), '1101', 'picked up the synced position');
+await d.c.close();
+
+// Old marker-sync setting carries over to note sync.
+d = await device({ syncMarker: true }, '1050');
+assert.equal(await d.p.$eval('#timeline article:not(.read)', (n) => n.dataset.id), '1101', 'syncMarker migrated to note sync');
+await d.c.close();
+
+// Logged in before the new permission: saving fails with 403, and Settings
+// offers to log in again.
+noteScopeMissing = true;
+d = await device({ syncNote: true }, '1050');
+await d.p.mouse.wheel(0, 1500);
+await d.p.waitForSelector('#toast:not([hidden])', { timeout: 8000 });
+assert.match(await d.p.textContent('#toast'), /Log in again/);
+await d.p.click('#menu');
+assert.equal(await d.p.isVisible('#sync-login'), true, 'log in again offered');
+await d.c.close();
+noteScopeMissing = false;
+
+// A server that won't take a note on your own account: fall back to the
+// contact account's note, keeping whatever else is written there.
+rejectSelfNote = true;
+notes = { admin: 'my own note about the admin' };
+d = await device({}, '1050');
+await d.p.click('#menu');
+await d.p.check('#sync-note');
+await d.p.waitForFunction(() => /contact account/.test(document.querySelector('#sync-info').textContent));
+assert.equal(notes.admin, 'my own note about the admin\nmastorss:{"home":"1050"}', 'fallback note keeps existing text');
+await d.c.close();
+rejectSelfNote = false;
+
 // iOS home-screen app: by default links open normally (the in-app viewer).
 // With "Open links in Safari" on, they go through x-safari-https://, falling
 // back to a normal open if nothing takes over (as here: Chromium doesn't
@@ -396,7 +468,10 @@ await ios.close();
 const touch = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block', hasTouch: true, isMobile: true });
 await mockServer(touch);
 await touch.routeWebSocket(/\/api\/v1\/streaming/, () => {}); // no live updates, so only the pull can fetch
-await touch.addInitScript(() => localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' })));
+await touch.addInitScript((pos) => {
+  localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' }));
+  localStorage.setItem('mastorss.pos.mastodon.au.me', JSON.stringify(pos)); // already read up to the end
+}, String(Math.max(...posts.map((p) => Number(p.id)))));
 const tp = await touch.newPage();
 await tp.goto(APP);
 await tp.waitForSelector('#end.caught-up');

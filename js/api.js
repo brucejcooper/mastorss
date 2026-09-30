@@ -2,7 +2,8 @@
 // paste-the-code fallback for iOS home-screen apps where the redirect can
 // land in the wrong browser context).
 
-const SCOPES = 'read write:favourites write:statuses write:bookmarks';
+// write:accounts is for the private note that syncs the reading position.
+const SCOPES = 'read write:favourites write:statuses write:bookmarks write:accounts';
 const OOB = 'urn:ietf:wg:oauth:2.0:oob';
 const APP_NAME = 'Mastorss';
 
@@ -12,6 +13,10 @@ export function redirectUri() {
   u.hash = '';
   return u.toString();
 }
+
+// Registered apps are cached per server, copy of the app and scope set (an
+// app registered with fewer scopes can't be authorised for more).
+const appKey = (instance) => `mastorss.app.${instance}.${redirectUri()}.${SCOPES}`;
 
 // Per-copy key for the login in progress (see the scoping note in app.js).
 const pendingKey = () => `mastorss.pending.${redirectUri()}`;
@@ -38,7 +43,7 @@ async function pkceChallenge(verifier) {
 }
 
 async function registerApp(instance) {
-  const key = `mastorss.app.${instance}.${redirectUri()}`;
+  const key = appKey(instance);
   const cached = localStorage.getItem(key);
   if (cached) return JSON.parse(cached);
   const res = await fetch(`https://${instance}/api/v1/apps`, {
@@ -106,7 +111,7 @@ export async function finishLogin(code, state) {
 }
 
 export async function revoke(session) {
-  const app = JSON.parse(localStorage.getItem(`mastorss.app.${session.instance}.${redirectUri()}`) || 'null');
+  const app = JSON.parse(localStorage.getItem(appKey(session.instance)) || 'null');
   if (!app) return;
   await fetch(`https://${session.instance}/oauth/revoke`, {
     method: 'POST',
@@ -137,7 +142,11 @@ export class Client {
       err.unauthorised = true;
       throw err;
     }
-    if (!res.ok) throw new Error(`${method} ${path} failed (${res.status})`);
+    if (!res.ok) {
+      const err = new Error(`${method} ${path} failed (${res.status})`);
+      err.status = res.status;
+      throw err;
+    }
     return res.json();
   }
 
@@ -179,6 +188,16 @@ export class Client {
 
   search(q) {
     return this.request(`/api/v2/search?${new URLSearchParams({ q, resolve: 'true', limit: 20 })}`);
+  }
+
+  // The private note you keep on an account (only you can see it).
+  async getNote(accountId) {
+    const [rel] = await this.request(`/api/v1/accounts/relationships?${new URLSearchParams({ 'id[]': accountId })}`);
+    return rel?.note ?? '';
+  }
+
+  setNote(accountId, comment, { keepalive = false } = {}) {
+    return this.request(`/api/v1/accounts/${accountId}/note`, { method: 'POST', body: { comment }, keepalive });
   }
 
   instanceInfo() {

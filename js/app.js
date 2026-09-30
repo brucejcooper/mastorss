@@ -22,6 +22,31 @@ const IOS_HOME_SCREEN = navigator.standalone === true;
 const KEEP_READ_IN_DOM = 30;
 const HISTORY_SIZE = 20; // already-read posts shown above the reading position on load
 const VISIBILITIES = ['public', 'unlisted', 'private', 'direct']; // least to most restrictive
+const NOTE_SAVE_MS = 4000; // batch position saves to the sync note
+
+// ---------------------------------------------------------------- position sync
+// Syncing uses a private note on an account (Mastodon lets you keep a note on
+// any account that only you can see). Unlike the home timeline marker, no
+// other client writes to it, so another app can't move your place. Our line
+// in the note looks like `mastorss:{"home":"115..."}`; anything else in the
+// note is left alone.
+const NOTE_PREFIX = 'mastorss:';
+
+function notePosition(text) {
+  const line = (text || '').split('\n').find((l) => l.startsWith(NOTE_PREFIX));
+  if (!line) return null;
+  try {
+    return JSON.parse(line.slice(NOTE_PREFIX.length)).home || null;
+  } catch {
+    return null;
+  }
+}
+
+function withNotePosition(text, position) {
+  const ours = `${NOTE_PREFIX}${JSON.stringify({ home: position })}`;
+  const lines = (text || '').split('\n').filter((l) => l && !l.startsWith(NOTE_PREFIX));
+  return [...lines, ours].join('\n');
+}
 
 // Keys are scoped to the folder the app is served from, so copies on the
 // same origin (e.g. /mastorss/ and /mastorss/test/) keep separate logins
@@ -178,7 +203,10 @@ class Reader {
     this.account = account;
     this.posKey = `mastorss.pos.${session.instance}.${account.id}`;
     this.settingsKey = `mastorss.settings.${session.instance}.${account.id}`;
-    this.settings = { syncMarker: false, ...store.get(this.settingsKey, {}) };
+    this.settings = { syncNote: false, ...store.get(this.settingsKey, {}) };
+    // Earlier versions synced through the timeline marker; carry the choice over.
+    if (this.settings.syncMarker) this.settings.syncNote = true;
+    delete this.settings.syncMarker;
     this.position = store.get(this.posKey); // id of the newest post that has been read
     this.newest = null; // id of the newest post loaded into the page
     this.oldest = null; // id of the oldest post loaded into the page
@@ -191,7 +219,9 @@ class Reader {
     this.caughtUp = false;
     this.lastChecked = 0;
     this.readCursor = 0; // index into the list of the first article not yet marked read
-    this.serverDirty = false;
+    this.noteDirty = false;
+    this.noteTarget = null; // { id, text, fallback } once known
+    this.noteNeedsLogin = false;
 
     this.list = $('#timeline');
     this.end = $('#end');
@@ -227,19 +257,97 @@ class Reader {
   }
 
   async resolvePosition() {
-    let server = null;
-    try {
-      server = await this.client.getMarker();
-    } catch (err) {
-      console.warn('Could not read marker', err);
+    if (this.settings.syncNote) {
+      try {
+        const synced = notePosition((await this.findNote()).text);
+        if (compareIds(synced, this.position) > 0) this.position = synced;
+      } catch (err) {
+        console.warn('Could not read the sync note', err);
+      }
     }
-    if (this.settings.syncMarker) {
-      if (compareIds(server, this.position) > 0) this.position = server;
-    } else if (!this.position) {
-      this.position = server;
+    // First run on this device with nothing synced: start from the server's
+    // timeline marker, if there is one.
+    if (!this.position) {
+      try {
+        this.position = await this.client.getMarker();
+      } catch (err) {
+        console.warn('Could not read marker', err);
+      }
     }
     this.newest = this.position;
     if (this.position) store.set(this.posKey, this.position);
+  }
+
+  // Which account the sync note lives on: your own account if Mastodon allows
+  // a note there, otherwise your server's contact account. Every device
+  // follows the same rule, so they all find the same note.
+  async findNote() {
+    if (this.noteTarget) return this.noteTarget;
+    const self = this.account.id;
+    const contact = (await this.client.instanceInfo()).contact?.account?.id;
+    const fallback = contact && contact !== self ? contact : null;
+    const selfText = await this.client.getNote(self).catch(() => null);
+    if (selfText == null || !notePosition(selfText)) {
+      const other = fallback ? await this.client.getNote(fallback).catch(() => null) : null;
+      if (other != null && notePosition(other)) return (this.noteTarget = { id: fallback, text: other, fallback: null });
+    }
+    return (this.noteTarget = { id: self, text: selfText ?? '', fallback });
+  }
+
+  // Save the position to the note. Normally re-reads it first so another
+  // device that has read further is never moved back; when the app is being
+  // hidden there's only time for a single write.
+  async flushNote(keepalive = false) {
+    if (!this.noteDirty || !this.position || !this.settings.syncNote) return;
+    this.noteDirty = false;
+    clearTimeout(this.noteTimer);
+    let target;
+    try {
+      target = await this.findNote();
+      if (!keepalive) {
+        target.text = await this.client.getNote(target.id);
+        if (compareIds(notePosition(target.text), this.position) >= 0) return;
+      }
+      await this.writeNote(target, keepalive);
+    } catch (err) {
+      if (err.status === 403) {
+        // Logged in before the app asked for write:accounts.
+        if (!this.noteNeedsLogin) showToast('Log in again (in Settings) to sync your position across devices');
+        this.noteNeedsLogin = true;
+        this.updateSyncInfo();
+        return;
+      }
+      if (err.status === 422 && target?.fallback) {
+        // Mastodon won't take a note on your own account: use the fallback.
+        this.noteTarget = { id: target.fallback, text: await this.client.getNote(target.fallback).catch(() => ''), fallback: null };
+        try {
+          await this.writeNote(this.noteTarget, keepalive);
+          return;
+        } catch (err2) {
+          console.warn('Could not save the sync note', err2);
+        }
+      } else {
+        console.warn('Could not save the sync note', err);
+      }
+      this.noteDirty = true;
+    }
+  }
+
+  async writeNote(target, keepalive) {
+    const text = withNotePosition(target.text, this.position);
+    await this.client.setNote(target.id, text, { keepalive });
+    target.text = text;
+    this.noteNeedsLogin = false;
+    this.updateSyncInfo();
+  }
+
+  updateSyncInfo() {
+    $('#sync-login').hidden = !this.noteNeedsLogin;
+    $('#sync-info').textContent = this.noteNeedsLogin
+      ? 'Mastorss needs one more permission to save the note. Log in again to allow it.'
+      : this.settings.syncNote && this.noteTarget
+        ? `Saved in a private note on ${this.noteTarget.id === this.account.id ? 'your account' : "your server's contact account"} (only you can see it).`
+        : '';
   }
 
   // A few already-read posts above the reading position, so scrolling up
@@ -392,14 +500,14 @@ class Reader {
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
-        this.flushMarker(true);
+        this.flushNote(true);
         this.stopStream();
       } else {
         this.startStream();
         if (this.caughtUp) this.checkForNew({ background: true });
       }
     });
-    window.addEventListener('pagehide', () => this.flushMarker(true));
+    window.addEventListener('pagehide', () => this.flushNote(true));
 
     $('#check-new').onclick = () => this.checkForNew();
     $('#retry').onclick = () => this.loadMore({ force: true });
@@ -690,23 +798,10 @@ class Reader {
     if (compareIds(id, this.position) <= 0) return;
     this.position = id;
     store.set(this.posKey, id);
-    if (this.settings.syncMarker) {
-      this.serverDirty = true;
-      clearTimeout(this.markerTimer);
-      this.markerTimer = setTimeout(() => this.flushMarker(), 4000);
-    }
-  }
-
-  async flushMarker(keepalive = false) {
-    if (!this.serverDirty || !this.position) return;
-    this.serverDirty = false;
-    clearTimeout(this.markerTimer);
-    try {
-      await this.client.setMarker(this.position, { keepalive });
-    } catch (err) {
-      // 409 means another client updated it at the same moment; try again later.
-      this.serverDirty = true;
-      console.warn('Could not save marker', err);
+    if (this.settings.syncNote) {
+      this.noteDirty = true;
+      clearTimeout(this.noteTimer);
+      this.noteTimer = setTimeout(() => this.flushNote(), NOTE_SAVE_MS);
     }
   }
 
@@ -901,16 +996,22 @@ class Reader {
 
   openSettings() {
     const dlg = $('#settings');
-    const sync = $('#sync-marker');
-    sync.checked = this.settings.syncMarker;
+    const sync = $('#sync-note');
+    sync.checked = this.settings.syncNote;
     sync.onchange = () => {
-      this.settings.syncMarker = sync.checked;
+      this.settings.syncNote = sync.checked;
       store.set(this.settingsKey, this.settings);
       if (sync.checked) {
-        this.serverDirty = true;
-        this.flushMarker();
+        this.noteDirty = true;
+        this.flushNote();
       }
+      this.updateSyncInfo();
     };
+    $('#sync-login').onclick = async () => {
+      await this.flushNote(true);
+      beginLogin(this.session.instance).catch(showError);
+    };
+    this.updateSyncInfo();
     $('#safari-row').hidden = !IS_IOS;
     const safari = $('#links-in-safari');
     safari.checked = this.linksInSafari();
@@ -924,7 +1025,7 @@ class Reader {
       try {
         const latest = await this.client.latestHomeId();
         if (latest) this.setPosition(latest);
-        await this.flushMarker();
+        await this.flushNote();
         location.reload();
       } catch (err) {
         showError(err);
@@ -932,7 +1033,7 @@ class Reader {
     };
     $('#logout').onclick = async () => {
       if (!confirm('Log out of this device?')) return;
-      await this.flushMarker();
+      await this.flushNote();
       await revoke(this.session);
       store.del('mastorss.session');
       location.reload();
