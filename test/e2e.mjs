@@ -193,7 +193,6 @@ assert.equal(pos, '1119', 'read to the end');
 assert.equal(await page.textContent('#count'), '0 unread');
 assert.equal(await page.$eval('#timeline article:last-child', (n) => getComputedStyle(n).opacity), '0.55', 'last post dimmed once read');
 assert.equal(await page.isVisible('#boot'), false, 'startup spinner gone');
-assert.ok((await page.$$('#timeline article')).length < 80, 'old read posts trimmed from DOM');
 assert.deepEqual(markerPosts, [], 'server marker untouched while sync is off');
 
 assert.match(await page.textContent('#last-checked'), /automatically|as they arrive/);
@@ -371,6 +370,40 @@ await old.waitForSelector('#timeline article:not(.read)');
 assert.equal(await old.$eval('#timeline article:not(.read)', (n) => n.dataset.id), '1101', 'legacy position carried over');
 assert.equal(await old.isVisible('#login'), false, 'still logged in');
 await legacy.close();
+
+// Regression: on iOS, scroll corrections made while a flick is gliding can be
+// dropped. The app used to remove old read posts from the top while you read
+// and correct the scroll; when iOS dropped the correction, dozens of unseen
+// posts were marked read in one go. Simulate that by dropping every scrollBy:
+// reading must still advance about one post per small scroll.
+{
+  const c = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
+  await mockServer(c);
+  await c.addInitScript(() => {
+    if (!sessionStorage.getItem('seeded')) {
+      sessionStorage.setItem('seeded', '1');
+      localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' }));
+      localStorage.setItem('mastorss.pos.mastodon.au.me', JSON.stringify('1000'));
+    }
+    window.scrollBy = () => {};
+  });
+  const p = await c.newPage();
+  await p.goto(APP);
+  await p.waitForSelector('#timeline article:not(.read)');
+  const readPos = () => p.evaluate(() => Number(JSON.parse(localStorage.getItem(`mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`)) || 1000));
+  let prev = await readPos();
+  for (let i = 0; i < 60; i++) {
+    await p.mouse.wheel(0, 300);
+    await p.waitForTimeout(80);
+    const now = await readPos();
+    // Reaching the "caught up" card marks the last few posts above it read, by design.
+    const atEnd = now === Math.max(...posts.map((q) => Number(q.id)));
+    assert.ok(now - prev <= 3 || atEnd, `read position jumped ${now - prev} posts in one small scroll (${prev} -> ${now})`);
+    prev = now;
+  }
+  assert.ok(prev > 1040, `reading advanced normally (to ${prev})`);
+  await c.close();
+}
 
 // Timeline markers are never written: other apps can't be confused by
 // Mastorss, and Mastorss no longer follows what they do to the marker.

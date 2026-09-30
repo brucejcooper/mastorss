@@ -19,7 +19,6 @@ const SAFARI_FALLBACK_MS = 1500;
 // true when running from the home screen.
 const IS_IOS = 'standalone' in navigator;
 const IOS_HOME_SCREEN = navigator.standalone === true;
-const KEEP_READ_IN_DOM = 30;
 const HISTORY_SIZE = 20; // already-read posts shown above the reading position on load
 const VISIBILITIES = ['public', 'unlisted', 'private', 'direct']; // least to most restrictive
 const NOTE_SAVE_MS = 4000; // batch position saves to the sync note
@@ -406,7 +405,11 @@ class Reader {
         frag.append(node);
         added++;
       }
-      // Prepend without moving what the reader is looking at.
+      // Prepend without moving what the reader is looking at. Adding content
+      // above the viewport needs a matching scroll correction, and iOS drops
+      // or delays those while a flick is still gliding, so wait for scrolling
+      // to stop first.
+      await this.scrollSettled();
       const anchor = this.list.firstElementChild || this.end;
       const before = anchor.getBoundingClientRect().top;
       this.list.prepend(frag);
@@ -487,8 +490,12 @@ class Reader {
     for (const type of ['touchmove', 'wheel', 'pointerdown', 'keydown']) {
       window.addEventListener(type, () => (lastInput = performance.now()), { passive: true });
     }
+    window.addEventListener('touchstart', () => (this.touching = true), { passive: true });
+    window.addEventListener('touchend', () => (this.touching = false), { passive: true });
+    window.addEventListener('touchcancel', () => (this.touching = false), { passive: true });
     let ticking = false;
     window.addEventListener('scroll', () => {
+      this.lastScrollAt = performance.now();
       if (ticking || !this.overlaysClosed()) return;
       ticking = true;
       requestAnimationFrame(() => {
@@ -526,6 +533,18 @@ class Reader {
       if (e.key === 'j') this.nextPost();
       if (e.key === 'k') window.scrollBy({ top: -window.innerHeight * 0.8, behavior: 'smooth' });
       if (e.key === 'r' && this.caughtUp) this.checkForNew();
+    });
+  }
+
+  // Resolves once the page has stopped scrolling (no finger down, no scroll
+  // events for a moment, which covers iOS momentum scrolling).
+  scrollSettled() {
+    return new Promise((resolve) => {
+      const check = () => {
+        if (!this.touching && performance.now() - (this.lastScrollAt || 0) > 250) resolve();
+        else setTimeout(check, 100);
+      };
+      check();
     });
   }
 
@@ -766,27 +785,7 @@ class Reader {
       }
       advanced = true;
     }
-    if (advanced) {
-      this.updateCount();
-      this.trimRead();
-    }
-  }
-
-  // Drop old read posts from the DOM so long sessions stay light, keeping the
-  // viewport where it is.
-  trimRead() {
-    const excess = this.readCursor - KEEP_READ_IN_DOM;
-    if (excess < 20) return;
-    const items = Array.from(this.articles()).slice(0, excess);
-    const firstKept = this.articles()[excess];
-    const anchorTop = firstKept.getBoundingClientRect().top;
-    items.forEach((n) => n.remove());
-    this.readCursor -= excess;
-    // Scrolling back up re-fetches what was dropped.
-    this.oldest = firstKept.dataset.id;
-    this.noMoreOlder = false;
-    const shift = firstKept.getBoundingClientRect().top - anchorTop;
-    if (shift) window.scrollBy(0, shift);
+    if (advanced) this.updateCount();
   }
 
   updateCount() {
