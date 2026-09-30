@@ -92,7 +92,7 @@ Notes:
 
 ### Updates
 
-Each deploy writes a `version.json` containing the commit. iOS keeps home-screen apps suspended for days, so the app checks this file whenever it comes back to the foreground and every 30 minutes while open. If a new version has been deployed, it reloads straight away when nothing is open; your reading position is saved, so you land in the same place. If a thread, search or the composer is open, it shows a "New version available · Reload" bar instead. A fresh launch always fetches the latest files, because the service worker is network-first.
+Each deploy writes a `version.json` with the commit and its date. Settings shows it at the bottom ("Version 4691a93 · 30 Sep 2026, 11:04 pm"), with a **Check for update** button that reloads if a newer version is out. iOS keeps home-screen apps suspended for days, so the app checks this file whenever it comes back to the foreground and every 30 minutes while open. If a new version has been deployed, it reloads straight away when nothing is open; your reading position is saved, so you land in the same place. If a thread, search or the composer is open, it shows a "New version available · Reload" bar instead. A fresh launch always fetches the latest files, because the service worker is network-first.
 
 ### On your home server
 

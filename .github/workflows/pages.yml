@@ -53,8 +53,12 @@ jobs:
           sed -i 's/<html lang="en">/<html lang="en" data-env="test">/; s#<title>Mastorss</title>#<title>Mastorss Test</title>#; s/content="Mastorss">/content="Mastorss Test">/' _site/test/index.html
           sed -i 's/"name": "Mastorss"/"name": "Mastorss Test"/; s/"short_name": "Mastorss"/"short_name": "Mastorss Test"/' _site/test/manifest.webmanifest
           # Lets a running app notice a new deploy and reload itself.
-          echo "{\"version\":\"$(git -C prod rev-parse HEAD)\"}" > _site/version.json
-          echo "{\"version\":\"$(git -C test rev-parse HEAD)\"}" > _site/test/version.json
+          # "built" is the commit date, so it identifies the version itself
+          # (both copies are rebuilt on every deploy).
+          for d in prod test; do
+            out=_site; [ $d = test ] && out=_site/test
+            echo "{\"version\":\"$(git -C $d rev-parse HEAD)\",\"built\":\"$(git -C $d log -1 --format=%cI)\"}" > $out/version.json
+          done
           echo "prod: $(git -C prod rev-parse --short HEAD)  test: $(git -C test rev-parse --short HEAD)"
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

@@ -114,15 +114,24 @@ function plainText(html) {
 // so we land in the same place), otherwise offer a reload button.
 
 const UPDATE_CHECK_MS = 30 * 60_000;
-let loadedVersion = null;
+let loadedVersion = null; // commit this page was loaded from
+let loadedBuilt = null; // when it was deployed
 
+// { version, built } from the deploy, or null (local development, offline).
 async function fetchVersion() {
   try {
     const res = await fetch('version.json', { cache: 'no-store' });
-    return res.ok ? (await res.json()).version : null;
+    return res.ok ? await res.json() : null;
   } catch {
     return null;
   }
+}
+
+// Shown in Settings, so you can tell which version is running.
+function versionLabel() {
+  if (!loadedVersion) return 'Development build';
+  const built = loadedBuilt ? ` · ${new Date(loadedBuilt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : '';
+  return `Version ${loadedVersion.slice(0, 7)}${built}`;
 }
 
 function busy() {
@@ -131,7 +140,7 @@ function busy() {
 
 async function checkForUpdate() {
   if (!loadedVersion || document.visibilityState !== 'visible') return;
-  const latest = await fetchVersion();
+  const latest = (await fetchVersion())?.version;
   if (!latest || latest === loadedVersion) return;
   if (!busy()) {
     location.reload();
@@ -141,7 +150,9 @@ async function checkForUpdate() {
 }
 
 async function watchForUpdates() {
-  loadedVersion = await fetchVersion();
+  const v = await fetchVersion();
+  loadedVersion = v?.version ?? null;
+  loadedBuilt = v?.built ?? null;
   if (!loadedVersion) return; // local development: no version file
   $('#update-reload').onclick = () => location.reload();
   document.addEventListener('visibilitychange', checkForUpdate);
@@ -1017,6 +1028,13 @@ class Reader {
     safari.onchange = () => {
       this.settings.linksInSafari = safari.checked;
       store.set(this.settingsKey, this.settings);
+    };
+    $('#app-version').textContent = versionLabel();
+    $('#check-update').onclick = async () => {
+      const latest = (await fetchVersion())?.version;
+      if (!latest) $('#app-version').textContent = `${versionLabel()} · couldn't check`;
+      else if (latest === loadedVersion) $('#app-version').textContent = `${versionLabel()} · up to date`;
+      else location.reload(); // your place is saved, so this lands where you were
     };
     $('#position-info').textContent = this.position ? `Read up to post ${this.position}` : 'No position saved yet';
     $('#mark-all').onclick = async () => {

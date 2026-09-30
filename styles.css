@@ -324,3 +324,5 @@ dialog > button.danger { color: var(--danger); }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
 .boot { position: fixed; inset: 0; display: grid; place-items: center; color: var(--accent); font-size: 2rem; }
 .boot .spinner { margin: 0; border-width: 3px; }
+
+.version-row { text-align: center; margin: 0.8rem 0 0; font-size: 0.8rem; }

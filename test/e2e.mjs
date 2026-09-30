@@ -266,6 +266,7 @@ await page.waitForSelector('#end.caught-up');
 // Turn sync on: the position is saved to a private note on your own account.
 await page.click('#menu');
 assert.equal(await page.isVisible('#safari-row'), false, 'Safari setting only on iOS');
+assert.equal(await page.textContent('#app-version'), 'Development build', 'no version file locally');
 await page.check('#sync-note');
 await page.waitForFunction(() => /your account/.test(document.querySelector('#sync-info').textContent));
 await page.click('#settings-close');
@@ -529,7 +530,7 @@ await touch.close();
 const upd = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
 await mockServer(upd);
 let deployed = 'v1';
-await upd.route('**/version.json', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: deployed }) }));
+await upd.route('**/version.json', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: deployed, built: '2026-09-30T10:00:00Z' }) }));
 await upd.addInitScript(() => localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' })));
 const up = await upd.newPage();
 await up.goto(APP);
@@ -547,6 +548,11 @@ await up.evaluate(() => {
 await up.waitForFunction(() => !window.stillOldPage && document.querySelector('#timeline article'));
 await up.waitForTimeout(500);
 assert.equal(await up.isVisible('#update-bar'), false, 'no reload loop after updating');
+// Settings shows which version is running, and can check for a newer one.
+await up.click('#menu');
+assert.match(await up.textContent('#app-version'), /^Version v2 · .*2026/);
+await up.click('#check-update');
+await up.waitForFunction(() => /up to date/.test(document.querySelector('#app-version').textContent));
 await upd.close();
 
 await browser.close();
