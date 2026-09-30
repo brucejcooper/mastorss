@@ -135,7 +135,7 @@ async function mockServer(ctx) {
 }
 
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
+const ctx = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block', permissions: ['clipboard-read', 'clipboard-write'] });
 await mockServer(ctx);
 let streamSocket;
 const streamUrls = [];
@@ -272,6 +272,21 @@ await page.waitForFunction(() => /your account/.test(document.querySelector('#sy
 await page.click('#settings-close');
 const localPos = await page.evaluate(() => JSON.parse(localStorage.getItem(`mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`)));
 assert.equal(notes.me, `mastorss:{"home":"${localPos}"}`, 'position saved in the note');
+
+// Copy diagnostics: a plain-text report of recent events, surviving reloads,
+// with no post text or login token in it.
+await page.click('#menu');
+await page.click('#copy-diagnostics');
+await page.waitForSelector('#toast:not([hidden])');
+const report = await page.evaluate(() => navigator.clipboard.readText());
+assert.match(report, /^Mastorss diagnostics\napp: Development build/);
+assert.ok((report.match(/ start position=/g) || []).length >= 2, 'log survives reloads');
+assert.match(report, / read why=scrolled-past n=\d+ to=\d+ lowest=-?\d+ scrollY=\d+ byScrolling=true/);
+assert.match(report, / read why=end-card /);
+assert.match(report, / (load|check) after=\d+ got=\d+/);
+assert.match(report, / note-saved position=/);
+assert.ok(!report.includes('Post number') && !report.includes('tok'), 'no post text or token');
+await page.click('#settings-close');
 assert.ok(Number(localPos) >= 1119);
 
 // Thread: tapping a post opens the conversation in the app.

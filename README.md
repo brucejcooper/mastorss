@@ -123,6 +123,16 @@ The redirect URI is registered per URL, so if you move the app to a new address,
 2. Open it from the home screen and log in (`mastodon.au` is pre-filled).
 3. If approving on mastodon.au leaves you in a Safari sheet instead of back in the app, tap **"Log in with a code instead"**, approve, and paste the code it shows. Home-screen apps have storage separate from Safari, so the login has to finish inside the installed app.
 
+### Diagnostics
+
+☰ → **Copy diagnostics** copies a plain-text report you can paste into a message. If the clipboard is blocked, it opens the share sheet instead. The report has a header (version, device, screen, settings, position and page state) and the last 400 events, which survive reloads:
+- each batch of posts marked read, with the reason, the scroll position, how long since you last touched the screen, and where the posts were relative to the top bar;
+- newer and older posts loaded, and how much the page was shifted to compensate;
+- page jumps with no touch;
+- sync-note reads and saves, live-update connects and disconnects, the app being hidden or shown, update reloads, and JavaScript errors.
+
+It holds post ids and positions only: no post text, names or tokens.
+
 Keyboard (iPad/desktop): `j` next post, `k` back, `/` search, `n` new post, `r` check for new posts once caught up, `Esc` close a thread or search.
 
 ## Development

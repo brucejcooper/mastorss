@@ -79,6 +79,42 @@ const store = {
   },
 };
 
+// ---------------------------------------------------------------- diagnostics
+// A rolling log of what the app did and why, for working out odd behaviour
+// on a phone where there are no developer tools. Settings → Copy diagnostics
+// puts it on the clipboard. It records post ids and positions only: no post
+// text, names or tokens. It survives reloads, since iOS reloading the app is
+// often part of the story.
+
+const DIAG_KEY = 'mastorss.diag';
+const DIAG_MAX = 400;
+
+const diag = {
+  entries: store.get(DIAG_KEY, []),
+  log(event, data = {}) {
+    this.entries.push({ t: Date.now(), e: event, ...data });
+    if (this.entries.length > DIAG_MAX) this.entries.splice(0, this.entries.length - DIAG_MAX);
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => this.save(), 2000);
+  },
+  save() {
+    clearTimeout(this.saveTimer);
+    store.set(DIAG_KEY, this.entries);
+  },
+  lines() {
+    const pad = (n, w = 2) => String(n).padStart(w, '0');
+    return this.entries.map(({ t, e, ...data }) => {
+      const d = new Date(t);
+      const time = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+      const fields = Object.entries(data).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ');
+      return `${time} ${e}${fields ? ` ${fields}` : ''}`;
+    });
+  },
+};
+
+window.addEventListener('error', (e) => diag.log('error', { msg: e.message, at: `${(e.filename || '').split('/').pop()}:${e.lineno}` }));
+window.addEventListener('unhandledrejection', (e) => diag.log('error', { msg: String(e.reason?.message || e.reason) }));
+
 function showToast(text) {
   const bar = $('#toast');
   bar.textContent = text;
@@ -143,9 +179,12 @@ async function checkForUpdate() {
   const latest = (await fetchVersion())?.version;
   if (!latest || latest === loadedVersion) return;
   if (!busy()) {
+    diag.log('update-reload', { from: loadedVersion.slice(0, 7), to: latest.slice(0, 7) });
+    diag.save();
     location.reload();
     return;
   }
+  diag.log('update-available', { to: latest.slice(0, 7) });
   $('#update-bar').hidden = false;
 }
 
@@ -153,6 +192,7 @@ async function watchForUpdates() {
   const v = await fetchVersion();
   loadedVersion = v?.version ?? null;
   loadedBuilt = v?.built ?? null;
+  diag.log('version', { version: loadedVersion?.slice(0, 7) ?? 'dev' });
   if (!loadedVersion) return; // local development: no version file
   $('#update-reload').onclick = () => location.reload();
   document.addEventListener('visibilitychange', checkForUpdate);
@@ -267,11 +307,18 @@ class Reader {
   }
 
   async resolvePosition() {
+    const local = this.position;
+    let source = local ? 'local' : 'none';
+    let synced = null;
     if (this.settings.syncNote) {
       try {
-        const synced = notePosition((await this.findNote()).text);
-        if (compareIds(synced, this.position) > 0) this.position = synced;
+        synced = notePosition((await this.findNote()).text);
+        if (compareIds(synced, this.position) > 0) {
+          this.position = synced;
+          source = 'note';
+        }
       } catch (err) {
+        diag.log('note-read-failed', { status: err.status ?? err.message });
         console.warn('Could not read the sync note', err);
       }
     }
@@ -280,10 +327,12 @@ class Reader {
     if (!this.position) {
       try {
         this.position = await this.client.getMarker();
+        source = 'marker';
       } catch (err) {
         console.warn('Could not read marker', err);
       }
     }
+    diag.log('start', { position: this.position, source, local, note: synced, sync: !!this.settings.syncNote });
     this.newest = this.position;
     if (this.position) store.set(this.posKey, this.position);
   }
@@ -316,10 +365,16 @@ class Reader {
       target = await this.findNote();
       if (!keepalive) {
         target.text = await this.client.getNote(target.id);
-        if (compareIds(notePosition(target.text), this.position) >= 0) return;
+        const theirs = notePosition(target.text);
+        if (compareIds(theirs, this.position) >= 0) {
+          diag.log('note-skip', { ours: this.position, theirs });
+          return;
+        }
       }
       await this.writeNote(target, keepalive);
+      diag.log('note-saved', { position: this.position, keepalive });
     } catch (err) {
+      diag.log('note-save-failed', { status: err.status ?? err.message });
       if (err.status === 403) {
         // Logged in before the app asked for write:accounts.
         if (!this.noteNeedsLogin) showToast('Log in again (in Settings) to sync your position across devices');
@@ -375,7 +430,9 @@ class Reader {
         this.list.append(node);
         this.readCursor++;
       }
+      diag.log('history', { got: page.length, oldest: this.oldest });
     } catch (err) {
+      diag.log('history-failed', { status: err.status ?? err.message });
       console.warn('Could not load read posts', err);
     }
   }
@@ -420,12 +477,16 @@ class Reader {
       // above the viewport needs a matching scroll correction, and iOS drops
       // or delays those while a flick is still gliding, so wait for scrolling
       // to stop first.
+      const waitStart = performance.now();
       await this.scrollSettled();
       const anchor = this.list.firstElementChild || this.end;
       const before = anchor.getBoundingClientRect().top;
       this.list.prepend(frag);
       this.readCursor += added;
-      window.scrollBy(0, anchor.getBoundingClientRect().top - before);
+      const shift = anchor.getBoundingClientRect().top - before;
+      window.scrollBy(0, shift);
+      const drift = Math.round(anchor.getBoundingClientRect().top - before);
+      diag.log('older', { got: page.length, added, shift: Math.round(shift), drift, waitedMs: Math.round(performance.now() - waitStart) });
       status.textContent = '';
       ok = true;
     } catch (err) {
@@ -497,10 +558,11 @@ class Reader {
 
     // Browsers also fire scroll events when content is added or removed, so
     // note when the reader actually touched, wheeled, clicked or typed.
-    let lastInput = 0;
+    this.lastInput = 0;
     for (const type of ['touchmove', 'wheel', 'pointerdown', 'keydown']) {
-      window.addEventListener(type, () => (lastInput = performance.now()), { passive: true });
+      window.addEventListener(type, () => (this.lastInput = performance.now()), { passive: true });
     }
+    let lastY = window.scrollY;
     window.addEventListener('touchstart', () => (this.touching = true), { passive: true });
     window.addEventListener('touchend', () => (this.touching = false), { passive: true });
     window.addEventListener('touchcancel', () => (this.touching = false), { passive: true });
@@ -511,13 +573,19 @@ class Reader {
       ticking = true;
       requestAnimationFrame(() => {
         ticking = false;
-        this.trackRead({ byScrolling: performance.now() - lastInput < 1000 });
+        // Big moves with no recent touch are worth knowing about.
+        const dy = window.scrollY - lastY;
+        lastY = window.scrollY;
+        if (Math.abs(dy) > 1200 && performance.now() - this.lastInput > 500) diag.log('jump', { dy: Math.round(dy), scrollY: Math.round(window.scrollY) });
+        this.trackRead({ byScrolling: performance.now() - this.lastInput < 1000 });
       });
     }, { passive: true });
     this.bindPull();
 
     document.addEventListener('visibilitychange', () => {
+      diag.log(document.visibilityState === 'hidden' ? 'hidden' : 'visible', { scrollY: Math.round(window.scrollY) });
       if (document.visibilityState === 'hidden') {
+        diag.save();
         this.flushNote(true);
         this.stopStream();
       } else {
@@ -588,8 +656,10 @@ class Reader {
     this.startBusy(checking ? 'Checking for new posts…' : 'Loading…');
     $('#retry').hidden = true;
     try {
+      const after = this.newest;
       const page = await this.client.homeAfter(this.newest, PAGE_SIZE);
       this.lastChecked = Date.now();
+      diag.log(checking ? 'check' : 'load', { after, got: page.length, background });
       // With no saved position the first page is simply the most recent posts.
       const fresh = page.filter((s) => compareIds(s.id, this.newest) > 0);
       if (!this.oldest && fresh.length) this.oldest = fresh[0].id;
@@ -608,6 +678,7 @@ class Reader {
       this.trackRead();
       ok = true;
     } catch (err) {
+      diag.log('load-failed', { status: err.status ?? err.message, background });
       if (background) {
         console.warn('Background check failed', err);
         $('#last-checked').textContent = "Couldn't check for new posts, will try again shortly.";
@@ -643,7 +714,10 @@ class Reader {
       return;
     }
     this.stream = ws;
-    ws.onopen = () => (this.streamRetryMs = 2000);
+    ws.onopen = () => {
+      this.streamRetryMs = 2000;
+      diag.log('stream-open');
+    };
     ws.onmessage = (m) => {
       let msg;
       try {
@@ -651,9 +725,13 @@ class Reader {
       } catch {
         return;
       }
-      if (msg.event === 'update') this.onStreamedPost();
+      if (msg.event === 'update') {
+        diag.log('stream-update', { caughtUp: this.caughtUp });
+        this.onStreamedPost();
+      }
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
+      diag.log('stream-closed', { code: e?.code });
       if (this.stream !== ws) return;
       this.stream = null;
       if (document.visibilityState !== 'visible') return;
@@ -779,21 +857,30 @@ class Reader {
     const limit = this.headerHeight();
     const items = this.articles();
     let advanced = false;
+    const from = this.readCursor;
+    let lowest = null; // bottom edge of the last post marked, relative to the bar
     while (this.readCursor < items.length) {
       const node = items[this.readCursor];
-      if (node.getBoundingClientRect().bottom > limit) break;
+      const bottom = node.getBoundingClientRect().bottom;
+      if (bottom > limit) break;
+      lowest = Math.round(bottom - limit);
       node.classList.add('read');
       this.setPosition(node.dataset.id);
       this.readCursor++;
       advanced = true;
     }
+    if (this.readCursor > from) {
+      diag.log('read', { why: 'scrolled-past', n: this.readCursor - from, to: items[this.readCursor - 1].dataset.id, lowest, scrollY: Math.round(window.scrollY), byScrolling, inputAgoMs: Math.round(performance.now() - (this.lastInput || 0)) });
+    }
     const done = this.end.querySelector('.done');
     if (byScrolling && this.caughtUp && this.readCursor < items.length && done.getBoundingClientRect().bottom <= window.innerHeight) {
+      const endFrom = this.readCursor;
       for (; this.readCursor < items.length; this.readCursor++) {
         const node = items[this.readCursor];
         node.classList.add('read');
         this.setPosition(node.dataset.id);
       }
+      diag.log('read', { why: 'end-card', n: this.readCursor - endFrom, to: items[this.readCursor - 1].dataset.id, scrollY: Math.round(window.scrollY) });
       advanced = true;
     }
     if (advanced) this.updateCount();
@@ -1004,6 +1091,53 @@ class Reader {
     $('#compose-send').disabled = left < 0;
   }
 
+  diagnosticsText() {
+    const state = {
+      app: `${versionLabel()}${document.documentElement.dataset.env === 'test' ? ' (test)' : ''}`,
+      copied: new Date().toString(),
+      device: navigator.userAgent,
+      homeScreen: navigator.standalone === true || matchMedia('(display-mode: standalone)').matches,
+      screen: `${window.innerWidth}x${window.innerHeight} @${window.devicePixelRatio}`,
+      server: this.session.instance,
+      settings: JSON.stringify({ syncNote: !!this.settings.syncNote, linksInSafari: !!this.settings.linksInSafari }),
+      position: this.position,
+      onPage: `${this.articles().length} posts, first unread index ${this.readCursor}, ${this.articles().length - this.readCursor} unread`,
+      caughtUp: this.caughtUp,
+      scrollY: `${Math.round(window.scrollY)} of ${document.documentElement.scrollHeight}`,
+      stream: this.stream ? ['connecting', 'open', 'closing', 'closed'][this.stream.readyState] : 'none',
+    };
+    return [
+      'Mastorss diagnostics',
+      ...Object.entries(state).map(([k, v]) => `${k}: ${v}`),
+      '',
+      `Log (last ${diag.entries.length} events, oldest first):`,
+      ...diag.lines(),
+    ].join('\n');
+  }
+
+  // Clipboard first; if the browser refuses, the share sheet (Messages,
+  // Mail, Notes...); failing both, select the text so it can be copied.
+  async copyDiagnostics() {
+    diag.log('diagnostics-copied');
+    const text = this.diagnosticsText();
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Diagnostics copied. Paste them into a message.');
+      return;
+    } catch {}
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Mastorss diagnostics', text });
+        return;
+      } catch {}
+    }
+    const area = el('textarea', { class: 'diag-text', readonly: true });
+    area.value = text;
+    $('#settings').append(area);
+    area.select();
+    showToast('Select all and copy the text below.');
+  }
+
   openSettings() {
     const dlg = $('#settings');
     const sync = $('#sync-note');
@@ -1029,6 +1163,7 @@ class Reader {
       this.settings.linksInSafari = safari.checked;
       store.set(this.settingsKey, this.settings);
     };
+    $('#copy-diagnostics').onclick = () => this.copyDiagnostics();
     $('#app-version').textContent = versionLabel();
     $('#check-update').onclick = async () => {
       const latest = (await fetchVersion())?.version;

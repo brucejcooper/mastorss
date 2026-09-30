@@ -326,3 +326,5 @@ dialog > button.danger { color: var(--danger); }
 .boot .spinner { margin: 0; border-width: 3px; }
 
 .version-row { text-align: center; margin: 0.8rem 0 0; font-size: 0.8rem; }
+
+.diag-text { width: 100%; height: 12rem; margin-top: 0.6rem; font: 0.7rem/1.3 ui-monospace, monospace; }
