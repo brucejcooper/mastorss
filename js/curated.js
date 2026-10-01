@@ -50,6 +50,7 @@ export class Curated {
           url: it.url,
           title: it.title,
           summary: it.content_text || '',
+          image: it.image || null,
           published: it.date_published,
           author: it.authors?.[0]?.name || '',
           source: it._curator.source,

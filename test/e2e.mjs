@@ -563,7 +563,7 @@ await touch.close();
   });
   let feedItems = [
     item('3007', 'read-one'), // before the position: already read
-    item('3013', 'between', { also: [{ url: 'https://other.example/x', source: 'rss:The Verge' }] }),
+    { ...item('3013', 'between', { also: [{ url: 'https://other.example/x', source: 'rss:The Verge' }] }), image: 'https://news.example/pic.jpg' },
     item('3015', 'from-home', { source: 'mastodon:home' }), // the timeline has it already
     item('3201', 'newest', { lane: 'maybe' }), // after every post
   ];
@@ -586,7 +586,10 @@ await touch.close();
     }
     return route.fulfill({ status: 404 });
   });
-  await c.route('https://news.example/**', (r) => r.fulfill({ contentType: 'text/html', body: '<p>article</p>' }));
+  const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64');
+  await c.route('https://news.example/**', (r) => (r.request().url().endsWith('.jpg')
+    ? r.fulfill({ contentType: 'image/png', body: PIXEL })
+    : r.fulfill({ contentType: 'text/html', body: '<p>article</p>' })));
   await c.addInitScript(({ feed }) => {
     if (sessionStorage.getItem('seeded')) return;
     sessionStorage.setItem('seeded', '1');
@@ -606,6 +609,8 @@ await touch.close();
   assert.equal(await cp.$('article[data-id="3015"]'), null, 'items from the home timeline are left out');
   assert.equal(await cp.textContent('article[data-id="3013"] .who strong'), 'ABC News');
   assert.match(await cp.textContent('article[data-id="3013"] .curated-label'), /Picked for you/, 'curated cards say what they are');
+  assert.equal(await cp.$eval('article[data-id="3013"] .curated-image img', (i) => i.src), 'https://news.example/pic.jpg', 'article picture shown');
+  assert.equal(await cp.$('article[data-id="3201"] .curated-image'), null, 'no picture box without a picture');
   assert.match(await cp.textContent('article[data-id="3013"] .also'), /Also covered by The Verge/);
   assert.equal(await cp.$eval('article[data-id="3013"] .curated-title', (a) => a.href), 'https://news.example/between');
 

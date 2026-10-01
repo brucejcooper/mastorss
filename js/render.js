@@ -329,8 +329,11 @@ export function renderCurated(item, { vote = 0, sourceLabel, onVote, onOpen }) {
       el('small', { text: item.author || 'Article' })),
     link({ class: 'time', title: new Date(item.published).toLocaleString(), text: relTime(item.published) })));
 
+  const image = safeUrl(item.image);
   const body = el('div', { class: 'body' },
     link({ class: 'curated-title' }, el('strong', { text: item.title })),
+    image ? link({ class: 'curated-image', tabindex: '-1', 'aria-hidden': 'true' },
+      el('img', { src: image, alt: '', loading: 'lazy', onerror: (e) => e.currentTarget.parentElement.remove() })) : null,
     item.summary ? el('p', { class: 'curated-summary', text: item.summary }) : null);
   const also = item.also.filter((a) => safeUrl(a.url));
   if (also.length) {
