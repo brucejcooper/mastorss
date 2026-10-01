@@ -70,7 +70,8 @@ Settings → Curated feed; they're stored only in this browser.
 - **No doubles**: stories the curator found in your own home timeline are
   left out, since the timeline already shows them.
 - **Each card** shows the source, the article title (linking to it), its
-  picture when there is one, a short summary, other outlets that covered the same story, and "Why this?" (the
+  picture when there is one, and its summary (long ones open in place with
+  **Show more**; posts from Mastodon and Bluesky show their full text), other outlets that covered the same story, and "Why this?" (the
   classifiers' scores). 👍/👎 go to the curator as training votes; pressing
   again clears a vote. Opening the article is reported too.
 - **Every curated card says what it is** above the source: "📰 Picked for

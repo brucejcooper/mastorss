@@ -561,11 +561,12 @@ await touch.close();
     authors: [{ name: 'A. Writer' }],
     _curator: { sort_id: sortId, source: 'rss:ABC News', lane: 'main', reason: 'Jev 0.90: Must read', also: [], ...extra },
   });
+  const longPost = 'A post with a lot to say. '.repeat(40).trim();
   let feedItems = [
     item('3007', 'read-one'), // before the position: already read
     { ...item('3013', 'between', { also: [{ url: 'https://other.example/x', source: 'rss:The Verge' }] }), image: 'https://news.example/pic.jpg' },
     item('3015', 'from-home', { source: 'mastodon:home' }), // the timeline has it already
-    item('3201', 'newest', { lane: 'maybe' }), // after every post
+    { ...item('3201', 'newest', { lane: 'maybe' }), title: 'A post with a lot to say. A post with a lot…', content_text: longPost }, // after every post; a long post
   ];
   const votes = [];
   const events = [];
@@ -642,6 +643,15 @@ await touch.close();
   assert.equal(ids.at(-1), '3201', 'newest curated item last');
   assert.ok(await cp.$('article[data-id="3201"].curated.maybe'), 'maybe lane marked');
   assert.match(await cp.textContent('article[data-id="3201"] .curated-label'), /Maybe/, 'maybe cards say so in words');
+  // A post shows its text once (no title repeating its opening), clipped,
+  // with "Show more" opening the rest in place.
+  assert.equal(await cp.$('article[data-id="3201"] .curated-title'), null, 'post text not repeated as a title');
+  await cp.waitForSelector('article[data-id="3201"] .show-more:not([hidden])');
+  const clipped = await cp.$eval('article[data-id="3201"] .curated-summary', (p) => p.clientHeight);
+  await cp.click('article[data-id="3201"] .show-more');
+  assert.ok(await cp.$eval('article[data-id="3201"] .curated-summary', (p) => p.clientHeight) > clipped, 'Show more opens the rest');
+  assert.equal(await cp.textContent('article[data-id="3201"] .show-more'), 'Show less');
+  assert.ok(await cp.$('article[data-id="3013"] .show-more[hidden]'), 'short summaries get no button');
   await cp.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await cp.waitForTimeout(200);
   const posKey = await cp.evaluate(() => `mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`);

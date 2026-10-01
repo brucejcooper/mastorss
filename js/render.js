@@ -330,11 +330,29 @@ export function renderCurated(item, { vote = 0, sourceLabel, onVote, onOpen }) {
     link({ class: 'time', title: new Date(item.published).toLocaleString(), text: relTime(item.published) })));
 
   const image = safeUrl(item.image);
+  // A Mastodon or Bluesky post has no real title: the curator's "title" is
+  // just its opening words. Show the post's text once, in full, instead.
+  const opening = item.title.replace(/…$/, '').trim();
+  const isPost = !!opening && item.summary.replace(/\s+/g, ' ').startsWith(opening.replace(/\s+/g, ' '));
+  const text = item.summary ? el('p', { class: `curated-summary${isPost ? ' post-text' : ''}`, text: item.summary }) : null;
   const body = el('div', { class: 'body' },
-    link({ class: 'curated-title' }, el('strong', { text: item.title })),
+    isPost ? null : link({ class: 'curated-title' }, el('strong', { text: item.title })),
     image ? link({ class: 'curated-image', tabindex: '-1', 'aria-hidden': 'true' },
       el('img', { src: image, alt: '', loading: 'lazy', onerror: (e) => e.currentTarget.parentElement.remove() })) : null,
-    item.summary ? el('p', { class: 'curated-summary', text: item.summary }) : null);
+    text);
+  if (text) {
+    // Long text is clipped to a few lines; "Show more" opens it in place.
+    const more = el('button', { type: 'button', class: 'linklike show-more', hidden: true, text: 'Show more' });
+    more.addEventListener('click', () => {
+      const open = text.classList.toggle('expanded');
+      more.textContent = open ? 'Show less' : 'Show more';
+    });
+    body.append(more);
+    // Only once it's on the page can we tell whether it overflows.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (text.scrollHeight > text.clientHeight + 2) more.hidden = false;
+    }));
+  }
   const also = item.also.filter((a) => safeUrl(a.url));
   if (also.length) {
     body.append(el('p', { class: 'also' }, 'Also covered by ',
