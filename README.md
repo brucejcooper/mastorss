@@ -73,7 +73,9 @@ Settings → Curated feed; they're stored only in this browser.
   summary, other outlets that covered the same story, and "Why this?" (the
   classifiers' scores). 👍/👎 go to the curator as training votes; pressing
   again clears a vote. Opening the article is reported too.
-- **"Maybe" cards** (dashed edge) are ones the deciding classifier would have
+- **Every curated card says what it is** above the source: "📰 Picked for
+  you by the curator", or "🤔 Maybe" (also marked with a dashed edge).
+- **"Maybe" cards** are ones the deciding classifier would have
   dropped but the other one wouldn't, plus a small random sample. Voting on
   these is what teaches the curator about its blind spots.
 - The feed is fetched at most once a minute, whenever Mastorss checks for new

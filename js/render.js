@@ -318,11 +318,15 @@ export function renderCurated(item, { vote = 0, sourceLabel, onVote, onOpen }) {
   const article = el('article', { class: `status curated${maybe ? ' maybe' : ''}`, 'data-id': item.id, 'data-item': item.itemId });
   const link = (attrs, ...children) => el('a', { href, target: '_blank', rel: 'noopener noreferrer', onclick: () => onOpen?.(item), ...attrs }, ...children);
 
+  // Say in words what this card is: the edge colour alone didn't explain it.
+  article.append(el('div', { class: 'curated-label' }, maybe
+    ? '🤔 Maybe: the curator isn\u2019t sure. Tell it with 👍 or 👎'
+    : '📰 Picked for you by the curator'));
   article.append(el('header', {},
     el('span', { class: 'avatar source-icon', 'aria-hidden': 'true', text: '📰' }),
     el('div', { class: 'who' },
       el('strong', { text: sourceLabel(item.source) }),
-      el('small', { text: maybe ? 'Maybe · your vote teaches the curator' : (item.author || 'Picked for you') })),
+      el('small', { text: item.author || 'Article' })),
     link({ class: 'time', title: new Date(item.published).toLocaleString(), text: relTime(item.published) })));
 
   const body = el('div', { class: 'body' },

@@ -605,6 +605,7 @@ await touch.close();
   assert.ok(await cp.$('article[data-id="3007"].curated.read'), 'and marked read');
   assert.equal(await cp.$('article[data-id="3015"]'), null, 'items from the home timeline are left out');
   assert.equal(await cp.textContent('article[data-id="3013"] .who strong'), 'ABC News');
+  assert.match(await cp.textContent('article[data-id="3013"] .curated-label'), /Picked for you/, 'curated cards say what they are');
   assert.match(await cp.textContent('article[data-id="3013"] .also'), /Also covered by The Verge/);
   assert.equal(await cp.$eval('article[data-id="3013"] .curated-title', (a) => a.href), 'https://news.example/between');
 
@@ -635,6 +636,7 @@ await touch.close();
   ids = await order();
   assert.equal(ids.at(-1), '3201', 'newest curated item last');
   assert.ok(await cp.$('article[data-id="3201"].curated.maybe'), 'maybe lane marked');
+  assert.match(await cp.textContent('article[data-id="3201"] .curated-label'), /Maybe/, 'maybe cards say so in words');
   await cp.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await cp.waitForTimeout(200);
   const posKey = await cp.evaluate(() => `mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`);
