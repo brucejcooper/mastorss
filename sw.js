@@ -10,6 +10,7 @@ const SHELL = [
   './js/app.js',
   './js/api.js',
   './js/render.js',
+  './js/curated.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',

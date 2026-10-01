@@ -55,6 +55,30 @@ Why not Mastodon's timeline marker, which is built for this? Every client writes
 
 The timeline marker is still read once, on a device's very first run when nothing is saved yet. Mastorss never writes it.
 
+### Curated feed
+
+Optionally, Mastorss merges in articles picked for you by a
+[curator](https://git.8bitcloud.com/bruce/curator) service: news and posts from
+RSS feeds, Mastodon hashtags and Bluesky, grouped by story and filtered by a
+classifier trained on your votes. Put its feed address and vote token in
+Settings → Curated feed; they're stored only in this browser.
+
+- **Placement**: each story carries a `sort_id` in Mastodon's id format
+  (milliseconds << 16, from when the curator first saw it), so it slots in
+  among posts by time and shares the reading position, the sync note and
+  "Mark everything read".
+- **No doubles**: stories the curator found in your own home timeline are
+  left out, since the timeline already shows them.
+- **Each card** shows the source, the article title (linking to it), a short
+  summary, other outlets that covered the same story, and "Why this?" (the
+  classifiers' scores). 👍/👎 go to the curator as training votes; pressing
+  again clears a vote. Opening the article is reported too.
+- **"Maybe" cards** (dashed edge) are ones the deciding classifier would have
+  dropped but the other one wouldn't, plus a small random sample. Voting on
+  these is what teaches the curator about its blind spots.
+- The feed is fetched at most once a minute, whenever Mastorss checks for new
+  posts.
+
 ### Things to know
 
 - **Mastodon only keeps about the last 800 posts in each home feed.** If you're away long enough for more than that to arrive, the oldest unread posts are no longer served by the API. Mastorss starts from the oldest post still available, and there's no way to get the rest back.

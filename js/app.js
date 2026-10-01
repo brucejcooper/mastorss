@@ -1,5 +1,6 @@
 import { Client, beginLogin, finishLogin, normaliseInstance, revoke, compareIds, nextId } from './api.js';
-import { renderStatus, renderAccount, renderTag, el, safariUrl } from './render.js';
+import { renderStatus, renderCurated, renderAccount, renderTag, el, safariUrl } from './render.js';
+import { Curated, sourceLabel } from './curated.js';
 
 const $ = (sel) => document.querySelector(sel);
 const DEFAULT_INSTANCE = 'mastodon.au';
@@ -272,6 +273,11 @@ class Reader {
     this.noteDirty = false;
     this.noteTarget = null; // { id, text, fallback } once known
     this.noteNeedsLogin = false;
+    // The curated feed, when Settings has its address and token.
+    const { curatorFeed, curatorToken } = this.settings;
+    this.curated = curatorFeed && curatorToken ? new Curated({ feedUrl: curatorFeed, token: curatorToken }, store, (e, d) => diag.log(e, d)) : null;
+    this.pendingCurated = []; // unread curated items not on the page yet, oldest first
+    this.shownCurated = new Set();
 
     this.list = $('#timeline');
     this.end = $('#end');
@@ -285,6 +291,7 @@ class Reader {
     $('#who').textContent = `@${this.account.acct}@${this.session.instance}`;
     this.bindUi();
     await this.resolvePosition();
+    if (this.curated) this.queueCurated(await this.curated.refresh({ force: true }));
     await this.loadHistory();
     // Load until there's a screenful below the first unread post (or nothing
     // more), so jumping to it isn't cut short by the bottom of the page.
@@ -423,8 +430,12 @@ class Reader {
       const page = await this.client.homeBefore(nextId(this.position), HISTORY_SIZE);
       if (!page.length) this.noMoreOlder = true;
       else this.oldest = page[0].id;
-      for (const entry of page) {
-        const node = this.render(entry);
+      const read = this.curated && page.length
+        ? this.curated.items.filter((c) => compareIds(c.id, page[0].id) > 0 && compareIds(c.id, this.position) <= 0)
+        : [];
+      const entries = [...page, ...read.map((c) => ({ id: c.id, curated: c }))].sort((a, b) => compareIds(a.id, b.id));
+      for (const entry of entries) {
+        const node = entry.curated ? this.renderCuratedItem(entry.curated) : this.render(entry);
         if (!node) continue;
         node.classList.add('read');
         this.list.append(node);
@@ -496,6 +507,34 @@ class Reader {
       this.loadingOlder = false;
     }
     if (ok && window.scrollY < 1500) this.loadOlder();
+  }
+
+  // Curated items wait in `pendingCurated` until the timeline reaches their
+  // place: before a post with a later id, or at the end once caught up.
+  queueCurated(items) {
+    const waiting = new Set(this.pendingCurated.map((c) => c.id));
+    for (const c of items) {
+      if (this.shownCurated.has(c.id) || waiting.has(c.id) || compareIds(c.id, this.position) <= 0) continue;
+      this.pendingCurated.push(c);
+    }
+    this.pendingCurated.sort((a, b) => compareIds(a.id, b.id));
+  }
+
+  // Removes and returns the waiting items that sort before `id` (all of them
+  // when `id` is null).
+  takeCurated(id) {
+    const n = id == null ? this.pendingCurated.length : this.pendingCurated.findIndex((c) => compareIds(c.id, id) >= 0);
+    return this.pendingCurated.splice(0, n === -1 ? this.pendingCurated.length : n);
+  }
+
+  renderCuratedItem(item) {
+    this.shownCurated.add(item.id);
+    return renderCurated(item, {
+      vote: this.curated.vote(item.itemId),
+      sourceLabel,
+      onVote: (it, vote) => this.curated.setVote(it.itemId, vote),
+      onOpen: (it) => this.curated.event(it.itemId, 'open'),
+    });
   }
 
   render(entry, extra = {}) {
@@ -657,23 +696,33 @@ class Reader {
     $('#retry').hidden = true;
     try {
       const after = this.newest;
+      if (checking && this.curated) this.queueCurated(await this.curated.refresh());
       const page = await this.client.homeAfter(this.newest, PAGE_SIZE);
       this.lastChecked = Date.now();
       diag.log(checking ? 'check' : 'load', { after, got: page.length, background });
       // With no saved position the first page is simply the most recent posts.
       const fresh = page.filter((s) => compareIds(s.id, this.newest) > 0);
       if (!this.oldest && fresh.length) this.oldest = fresh[0].id;
+      let curatedAdded = 0;
+      const appendCurated = (items) => {
+        for (const c of items) this.list.append(this.renderCuratedItem(c));
+        curatedAdded += items.length;
+      };
       for (const entry of fresh) {
+        appendCurated(this.takeCurated(entry.id));
         const node = this.render(entry);
         if (node) this.list.append(node);
         this.newest = entry.id;
       }
       if (!fresh.length) {
+        appendCurated(this.takeCurated(null));
         this.markCaughtUp();
       } else {
         this.leaveCaughtUp();
       }
-      if (checking) result = fresh.length ? `Fetched ${fresh.length} new post${fresh.length === 1 ? '' : 's'}` : 'Fetched · no new posts';
+      if (curatedAdded) diag.log('curated-shown', { n: curatedAdded });
+      const added = fresh.length + curatedAdded;
+      if (checking) result = added ? `Fetched ${added} new post${added === 1 ? '' : 's'}` : 'Fetched · no new posts';
       this.updateCount();
       this.trackRead();
       ok = true;
@@ -1099,7 +1148,8 @@ class Reader {
       homeScreen: navigator.standalone === true || matchMedia('(display-mode: standalone)').matches,
       screen: `${window.innerWidth}x${window.innerHeight} @${window.devicePixelRatio}`,
       server: this.session.instance,
-      settings: JSON.stringify({ syncNote: !!this.settings.syncNote, linksInSafari: !!this.settings.linksInSafari }),
+      settings: JSON.stringify({ syncNote: !!this.settings.syncNote, linksInSafari: !!this.settings.linksInSafari, curated: !!this.curated }),
+      curated: this.curated ? `${this.curated.items.length} in feed, ${this.shownCurated.size} on page, ${this.pendingCurated.length} waiting` : 'off',
       position: this.position,
       onPage: `${this.articles().length} posts, first unread index ${this.readCursor}, ${this.articles().length - this.readCursor} unread`,
       caughtUp: this.caughtUp,
@@ -1163,6 +1213,20 @@ class Reader {
       this.settings.linksInSafari = safari.checked;
       store.set(this.settingsKey, this.settings);
     };
+    $('#curator-feed').value = this.settings.curatorFeed || '';
+    $('#curator-token').value = this.settings.curatorToken || '';
+    $('#curator-info').textContent = this.curated
+      ? `${this.curated.items.length} articles in the feed.`
+      : 'Off. Add the feed address and vote token from your curator to merge its picks into the timeline.';
+    $('#curator-save').onclick = () => {
+      const feed = $('#curator-feed').value.trim();
+      const token = $('#curator-token').value.trim();
+      if (feed && !/^https:\/\//.test(feed)) return showToast('The feed address must start with https://');
+      this.settings.curatorFeed = feed || undefined;
+      this.settings.curatorToken = token || undefined;
+      store.set(this.settingsKey, this.settings);
+      location.reload(); // your place is saved; the timeline reloads with the feed merged in
+    };
     $('#copy-diagnostics').onclick = () => this.copyDiagnostics();
     $('#app-version').textContent = versionLabel();
     $('#check-update').onclick = async () => {
@@ -1177,6 +1241,8 @@ class Reader {
       try {
         const latest = await this.client.latestHomeId();
         if (latest) this.setPosition(latest);
+        const lastCurated = this.curated?.items.at(-1)?.id;
+        if (lastCurated) this.setPosition(lastCurated);
         await this.flushNote();
         location.reload();
       } catch (err) {

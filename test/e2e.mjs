@@ -543,6 +543,130 @@ await tp.waitForFunction(() => document.querySelector('#end-status').textContent
 assert.match(await tp.textContent('#pull-hint'), /Pull up/);
 await touch.close();
 
+// Curated feed: articles from the curator are merged into the timeline by
+// their sort_id (a Mastodon-style id), so they share the reading position.
+// Posts here have even ids and curated items odd ones, to check placement.
+{
+  const savedPosts = posts;
+  const savedMarker = serverMarker;
+  posts = Array.from({ length: 30 }, (_, n) => status(3000 + 2 * n)); // 3000..3058
+  serverMarker = '3010';
+  const CURATOR = 'https://curator.test';
+  const item = (sortId, itemId, extra = {}) => ({
+    id: itemId,
+    url: `https://news.example/${itemId}`,
+    title: `Article ${itemId}`,
+    content_text: `Summary of ${itemId}`,
+    date_published: new Date().toISOString(),
+    authors: [{ name: 'A. Writer' }],
+    _curator: { sort_id: sortId, source: 'rss:ABC News', lane: 'main', reason: 'Jev 0.90: Must read', also: [], ...extra },
+  });
+  let feedItems = [
+    item('3007', 'read-one'), // before the position: already read
+    item('3013', 'between', { also: [{ url: 'https://other.example/x', source: 'rss:The Verge' }] }),
+    item('3015', 'from-home', { source: 'mastodon:home' }), // the timeline has it already
+    item('3201', 'newest', { lane: 'maybe' }), // after every post
+  ];
+  const votes = [];
+  const events = [];
+  const c = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
+  await mockServer(c);
+  await c.route(`${CURATOR}/**`, async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*' } });
+    if (url.pathname === '/f/secret/feed.json') return json(route, { version: 'https://jsonfeed.org/version/1.1', items: feedItems });
+    if (url.pathname === '/api/vote') {
+      votes.push({ body: JSON.parse(req.postData()), auth: req.headers().authorization });
+      return json(route, { ok: true });
+    }
+    if (url.pathname === '/api/event') {
+      events.push(JSON.parse(req.postData()));
+      return json(route, { ok: true });
+    }
+    return route.fulfill({ status: 404 });
+  });
+  await c.route('https://news.example/**', (r) => r.fulfill({ contentType: 'text/html', body: '<p>article</p>' }));
+  await c.addInitScript(({ feed }) => {
+    if (sessionStorage.getItem('seeded')) return;
+    sessionStorage.setItem('seeded', '1');
+    localStorage.setItem('mastorss.session', JSON.stringify({ instance: 'mastodon.au', token: 'tok' }));
+    localStorage.setItem('mastorss.settings.mastodon.au.me', JSON.stringify({ curatorFeed: feed, curatorToken: 'vote-tok' }));
+  }, { feed: `${CURATOR}/f/secret/feed.json` });
+  const cp = await c.newPage();
+  cp.on('pageerror', (e) => console.error('pageerror', e));
+  await cp.clock.install();
+  await cp.goto(APP);
+  await cp.waitForSelector('#timeline article[data-id="3013"]');
+  const order = () => cp.$$eval('#timeline article', (a) => a.map((n) => n.dataset.id));
+  let ids = await order();
+  assert.ok(ids.indexOf('3013') === ids.indexOf('3012') + 1 && ids.indexOf('3014') === ids.indexOf('3013') + 1, 'curated item sits between the posts either side of it');
+  assert.ok(ids.indexOf('3007') === ids.indexOf('3006') + 1, 'already-read curated item shown among the read posts');
+  assert.ok(await cp.$('article[data-id="3007"].curated.read'), 'and marked read');
+  assert.equal(await cp.$('article[data-id="3015"]'), null, 'items from the home timeline are left out');
+  assert.equal(await cp.textContent('article[data-id="3013"] .who strong'), 'ABC News');
+  assert.match(await cp.textContent('article[data-id="3013"] .also'), /Also covered by The Verge/);
+  assert.equal(await cp.$eval('article[data-id="3013"] .curated-title', (a) => a.href), 'https://news.example/between');
+
+  // Votes: 👍 sends the vote with the token; pressing it again clears it.
+  await cp.click('article[data-id="3013"] button[aria-label="More like this"]');
+  await cp.waitForSelector('article[data-id="3013"] button[aria-label="More like this"][aria-pressed="true"]');
+  assert.deepEqual(votes[0], { body: { item_id: 'between', vote: 1 }, auth: 'Bearer vote-tok' });
+  await cp.click('article[data-id="3013"] button[aria-label="More like this"]');
+  await cp.waitForSelector('article[data-id="3013"] button[aria-label="More like this"][aria-pressed="false"]');
+  assert.deepEqual(votes[1].body, { item_id: 'between', vote: 0 });
+  await cp.click('article[data-id="3013"] button[aria-label="Less like this"]');
+  await cp.waitForSelector('article[data-id="3013"] button[aria-label="Less like this"][aria-pressed="true"]');
+
+  // Following the link tells the curator.
+  const [popup] = await Promise.all([cp.waitForEvent('popup'), cp.click('article[data-id="3013"] .curated-title')]);
+  await popup.close();
+  await cp.waitForFunction(() => true);
+  for (let i = 0; i < 20 && !events.length; i++) await cp.waitForTimeout(50);
+  assert.deepEqual(events[0], { item_id: 'between', kind: 'open' });
+
+  // Read to the end: the newest curated item comes after the last post, in
+  // the maybe lane, and the position moves onto it.
+  for (let i = 0; i < 40; i++) {
+    await cp.mouse.wheel(0, 700);
+    await cp.waitForTimeout(40);
+  }
+  await cp.waitForSelector('#end.caught-up');
+  ids = await order();
+  assert.equal(ids.at(-1), '3201', 'newest curated item last');
+  assert.ok(await cp.$('article[data-id="3201"].curated.maybe'), 'maybe lane marked');
+  await cp.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await cp.waitForTimeout(200);
+  const posKey = await cp.evaluate(() => `mastorss.pos.mastodon.au.me@${new URL('.', location.href).pathname}`);
+  assert.equal(await cp.evaluate((k) => JSON.parse(localStorage.getItem(k)), posKey), '3201', 'position follows curated items');
+
+  // A new pick arrives: the next check (feed fetched at most once a minute) adds it.
+  feedItems = [...feedItems, item('3301', 'later')];
+  await cp.clock.fastForward(61_000);
+  await cp.click('#check-new');
+  await cp.waitForSelector('#timeline article[data-id="3301"]');
+  for (let i = 0; i < 5; i++) {
+    await cp.mouse.wheel(0, 700);
+    await cp.waitForTimeout(40);
+  }
+  await cp.waitForFunction((k) => JSON.parse(localStorage.getItem(k)) === '3301', posKey);
+
+  // Reload: votes are remembered, and read curated items stay read.
+  await cp.reload();
+  await cp.waitForSelector('#timeline article[data-id="3301"].read');
+  assert.ok(await cp.$('article[data-id="3301"].read'), 'curated item read before reload stays read');
+  const savedVotes = await cp.evaluate(() => JSON.parse(localStorage.getItem(`mastorss.curated.votes@${new URL('.', location.href).pathname}`)));
+  assert.deepEqual(savedVotes, { between: -1 }, 'votes remembered across reloads');
+  const report = await cp.evaluate(() => {
+    document.querySelector('#menu').click();
+    return document.querySelector('#curator-info').textContent;
+  });
+  assert.match(report, /articles in the feed/);
+  await c.close();
+  posts = savedPosts;
+  serverMarker = savedMarker;
+}
+
 // A new deploy is noticed when the app comes back to the foreground: a
 // Reload bar while something is open, a straight reload otherwise.
 const upd = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });

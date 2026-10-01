@@ -123,6 +123,15 @@
       <span>Open links in Safari
         <small>Avoids the blank page left behind when a link opens another app (YouTube, Mastodon, …), but that app's back button then goes to Safari instead of Mastorss. Needs iOS 17 or later; only applies to the home-screen app.</small></span>
     </label>
+    <fieldset class="curator">
+      <legend>Curated feed</legend>
+      <label for="curator-feed">Feed address</label>
+      <input id="curator-feed" type="url" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://…/feed.json">
+      <label for="curator-token">Vote token</label>
+      <input id="curator-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p class="hint"><span id="curator-info"></span></p>
+      <button id="curator-save" type="button">Save</button>
+    </fieldset>
     <p id="position-info" class="hint"></p>
     <button id="mark-all" type="button">Mark everything read</button>
     <button id="copy-diagnostics" type="button">Copy diagnostics</button>

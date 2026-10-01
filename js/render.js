@@ -308,6 +308,64 @@ export function renderStatus(entry, { instance, client, onThread, onReply, focus
   return article;
 }
 
+// A curated article (see curated.js). `data-id` is its place in the timeline
+// (a Mastodon-style id), `data-item` the curator's id for votes.
+// `onVote(item, vote)` returns a promise; `onOpen(item)` is called when the
+// link is followed.
+export function renderCurated(item, { vote = 0, sourceLabel, onVote, onOpen }) {
+  const href = safeUrl(item.url);
+  const maybe = item.lane === 'maybe';
+  const article = el('article', { class: `status curated${maybe ? ' maybe' : ''}`, 'data-id': item.id, 'data-item': item.itemId });
+  const link = (attrs, ...children) => el('a', { href, target: '_blank', rel: 'noopener noreferrer', onclick: () => onOpen?.(item), ...attrs }, ...children);
+
+  article.append(el('header', {},
+    el('span', { class: 'avatar source-icon', 'aria-hidden': 'true', text: '📰' }),
+    el('div', { class: 'who' },
+      el('strong', { text: sourceLabel(item.source) }),
+      el('small', { text: maybe ? 'Maybe · your vote teaches the curator' : (item.author || 'Picked for you') })),
+    link({ class: 'time', title: new Date(item.published).toLocaleString(), text: relTime(item.published) })));
+
+  const body = el('div', { class: 'body' },
+    link({ class: 'curated-title' }, el('strong', { text: item.title })),
+    item.summary ? el('p', { class: 'curated-summary', text: item.summary }) : null);
+  const also = item.also.filter((a) => safeUrl(a.url));
+  if (also.length) {
+    body.append(el('p', { class: 'also' }, 'Also covered by ',
+      ...also.flatMap((a, i) => [i ? ', ' : '', el('a', { href: safeUrl(a.url), target: '_blank', rel: 'noopener noreferrer', text: sourceLabel(a.source) })])));
+  }
+  if (item.reason) body.append(el('details', { class: 'why' }, el('summary', { text: 'Why this?' }), el('p', { text: item.reason })));
+  article.append(body);
+
+  const voteButton = (value, icon, label) => {
+    const btn = el('button', { type: 'button', class: `act vote${vote === value ? ' on' : ''}`, 'aria-pressed': String(vote === value), 'aria-label': label, title: label },
+      el('span', { class: 'icon', text: icon }));
+    btn.dataset.vote = String(value);
+    btn.addEventListener('click', async () => {
+      const next = btn.getAttribute('aria-pressed') === 'true' ? 0 : value;
+      const buttons = article.querySelectorAll('button.vote');
+      buttons.forEach((b) => (b.disabled = true));
+      try {
+        await onVote(item, next);
+        for (const b of buttons) {
+          const on = Number(b.dataset.vote) === next;
+          b.setAttribute('aria-pressed', String(on));
+          b.classList.toggle('on', on);
+        }
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        buttons.forEach((b) => (b.disabled = false));
+      }
+    });
+    return btn;
+  };
+  article.append(el('footer', {},
+    voteButton(1, '👍', 'More like this'),
+    voteButton(-1, '👎', 'Less like this'),
+    link({ class: 'act', title: 'Open the article', 'aria-label': 'Open the article' }, el('span', { class: 'icon', text: '↗' }))));
+  return article;
+}
+
 // A row for an account in search results; opens the profile on the home
 // server, where following/unfollowing happens.
 export function renderAccount(acc, { instance }) {

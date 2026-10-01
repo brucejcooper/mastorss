@@ -138,6 +138,23 @@ button { font: inherit; color: inherit; }
 .who small { display: block; color: var(--muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .time { color: var(--muted); font-size: 0.85rem; text-decoration: none; align-self: flex-start; }
 
+/* Curated articles (from the curator service). A tinted edge marks them out
+   from posts; "maybe" items, shown so votes reach what the filter would
+   drop, get a dashed one. */
+.status.curated { cursor: auto; border-left: 3px solid color-mix(in srgb, var(--accent) 55%, var(--surface)); }
+.status.curated.maybe { border-left-style: dashed; border-left-color: var(--muted); }
+.source-icon { width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center; font-size: 1.4rem; background: var(--bg); flex: none; }
+.curated-title { display: block; margin-top: 0.5rem; color: inherit; text-decoration: none; font-size: 1.05rem; line-height: 1.3; }
+.curated-summary { margin: 0.4rem 0 0; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.also { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--muted); }
+.also a { text-decoration: none; }
+details.why { margin-top: 0.4rem; font-size: 0.85rem; color: var(--muted); }
+details.why > summary { cursor: pointer; width: max-content; }
+details.why p { margin: 0.3rem 0 0; }
+.status.curated footer { justify-content: flex-start; gap: 2rem; }
+fieldset.curator { border: 1px solid var(--line); border-radius: 10px; margin: 0.8rem 0; display: grid; gap: 0.35rem; }
+fieldset.curator legend { font-weight: 600; padding: 0 0.3rem; }
+
 .content { margin-top: 0.5rem; }
 .content p { margin: 0 0 0.6em; }
 .content .invisible { display: none; }
