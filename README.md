@@ -73,7 +73,8 @@ Settings → Curated feed; they're stored only in this browser.
   picture when there is one, and its summary (long ones open in place with
   **Show more**; posts from Mastodon and Bluesky show their full text), other outlets that covered the same story, and "Why this?" (the
   classifiers' scores). 👍/👎 go to the curator as training votes; pressing
-  again clears a vote. Opening the article is reported too.
+  again clears a vote. Opening the article is reported too, and counts for
+  more than a 👍 (a 👎 still overrides it); a 🔖 counts for more again.
 - **Every curated card says what it is** above the source: "📰 Picked for
   you by the curator", or "🤔 Maybe" (also marked with a dashed edge).
 - **"Maybe" cards** are ones the deciding classifier would have

@@ -143,7 +143,7 @@ export class Curated {
     }));
   }
 
-  // Reading signals ("open" when you follow the link: a lighter 👍). Best effort.
+  // Reading signals ("open" when you follow the link: counts for more than a 👍). Best effort.
   event(itemId, kind) {
     this.post('event', { item_id: itemId, kind }, { keepalive: true }).catch(() => {});
   }
