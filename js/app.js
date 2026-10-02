@@ -291,7 +291,10 @@ class Reader {
     $('#who').textContent = `@${this.account.acct}@${this.session.instance}`;
     this.bindUi();
     await this.resolvePosition();
-    if (this.curated) this.queueCurated(await this.curated.refresh({ force: true }));
+    if (this.curated) {
+      this.queueCurated(await this.curated.refresh({ force: true }));
+      await this.curated.bookmarks().catch(() => {});
+    }
     await this.loadHistory();
     // Load until there's a screenful below the first unread post (or nothing
     // more), so jumping to it isn't cut short by the bottom of the page.
@@ -427,11 +430,12 @@ class Reader {
   async loadHistory() {
     if (!this.position) return;
     try {
-      const page = await this.client.homeBefore(nextId(this.position), HISTORY_SIZE);
-      if (!page.length) this.noMoreOlder = true;
-      else this.oldest = page[0].id;
-      const read = this.curated && page.length
-        ? this.curated.items.filter((c) => compareIds(c.id, page[0].id) > 0 && compareIds(c.id, this.position) <= 0)
+      const fetched = await this.client.homeBefore(nextId(this.position), HISTORY_SIZE);
+      if (!fetched.length) this.noMoreOlder = true;
+      else this.oldest = fetched[0].id;
+      const page = await this.curate(fetched);
+      const read = this.curated && fetched.length
+        ? this.curated.items.filter((c) => compareIds(c.id, fetched[0].id) > 0 && compareIds(c.id, this.position) <= 0)
         : [];
       const entries = [...page, ...read.map((c) => ({ id: c.id, curated: c }))].sort((a, b) => compareIds(a.id, b.id));
       for (const entry of entries) {
@@ -468,13 +472,14 @@ class Reader {
     status.replaceChildren(...busyText('Loading older posts…'));
     let ok = false;
     try {
-      const page = await this.client.homeBefore(this.oldest, PAGE_SIZE);
-      if (!page.length) {
+      const fetched = await this.client.homeBefore(this.oldest, PAGE_SIZE);
+      if (!fetched.length) {
         this.noMoreOlder = true;
         status.textContent = 'Start of your home timeline';
         return;
       }
-      this.oldest = page[0].id;
+      this.oldest = fetched[0].id;
+      const page = await this.curate(fetched);
       const frag = document.createDocumentFragment();
       let added = 0;
       for (const entry of page) {
@@ -530,19 +535,57 @@ class Reader {
   renderCuratedItem(item) {
     this.shownCurated.add(item.id);
     return renderCurated(item, {
-      vote: this.curated.vote(item.itemId),
+      vote: this.curated.vote({ item_id: item.itemId }),
+      bookmarked: this.curated.isBookmarked(item.itemId),
       sourceLabel,
-      onVote: (it, vote) => this.curated.setVote(it.itemId, vote),
+      onVote: (it, vote) => this.curated.setVote({ item_id: it.itemId }, vote),
+      onBookmark: (it, on) => this.curated.setBookmark({ item_id: it.itemId }, on),
       onOpen: (it) => this.curated.event(it.itemId, 'open'),
     });
   }
 
+  // Home posts go through the curator like any other source: it drops the
+  // ones that don't clear the (lower) home bar and says which are maybes or
+  // have other coverage. Your own posts and posts mentioning you always show.
+  // Returns the entries to show; keeps each verdict for rendering.
+  async curate(entries) {
+    if (!this.curated || !entries.length) return entries;
+    const me = this.account.id;
+    const mine = (e) => {
+      const s = e.reblog || e;
+      return s.account?.id === me || (s.mentions || []).some((m) => m.id === me);
+    };
+    const verdicts = await this.curated.verdicts(entries.filter((e) => !mine(e)).map((e) => e.id));
+    this.verdicts ??= new Map();
+    const shown = [];
+    let hidden = 0;
+    for (const e of entries) {
+      const v = verdicts.get(e.id);
+      if (v) this.verdicts.set(e.id, v);
+      if (v && !v.show && !mine(e)) hidden++;
+      else shown.push(e);
+    }
+    if (hidden) {
+      this.curated.hidden += hidden;
+      diag.log('home-filtered', { hidden, of: entries.length });
+    }
+    return shown;
+  }
+
   render(entry, extra = {}) {
+    const curation = this.curated && !extra.focus && !extra.depth ? {
+      verdict: this.verdicts?.get(entry.id),
+      vote: this.curated.vote({ status_id: entry.id }),
+      sourceLabel,
+      onVote: (vote) => this.curated.setVote({ status_id: entry.id }, vote),
+      onBookmark: (on) => this.curated.setBookmark({ status_id: entry.id }, on),
+    } : null;
     return renderStatus(entry, {
       instance: this.session.instance,
       client: this.client,
       onThread: (s) => this.openThread(s),
       onReply: (s) => this.openCompose(s),
+      curation,
       ...extra,
     });
   }
@@ -588,6 +631,7 @@ class Reader {
     window.addEventListener('popstate', () => this.closeTopOverlay());
     for (const back of document.querySelectorAll('.overlay .back')) back.onclick = () => history.back();
     $('#open-search').onclick = () => this.openSearch();
+    $('#open-bookmarks').onclick = () => this.openBookmarks();
     $('#open-compose').onclick = () => this.openCompose();
     $('#search-form').onsubmit = (e) => {
       e.preventDefault();
@@ -708,9 +752,10 @@ class Reader {
         for (const c of items) this.list.append(this.renderCuratedItem(c));
         curatedAdded += items.length;
       };
+      const shown = new Set((await this.curate(fresh)).map((e) => e.id));
       for (const entry of fresh) {
         appendCurated(this.takeCurated(entry.id));
-        const node = this.render(entry);
+        const node = shown.has(entry.id) ? this.render(entry) : null;
         if (node) this.list.append(node);
         this.newest = entry.id;
       }
@@ -1024,6 +1069,28 @@ class Reader {
     }
   }
 
+  // Bookmarks: articles (kept on the curator) and Mastodon posts (kept on
+  // your server), newest first in each.
+  async openBookmarks() {
+    const body = $('#bookmarks-body');
+    this.openOverlay($('#bookmarks'));
+    body.replaceChildren(el('p', { class: 'hint pad' }, ...busyText('Loading bookmarks…')));
+    const [articles, posts] = await Promise.all([
+      this.curated ? this.curated.bookmarks().catch(() => null) : Promise.resolve([]),
+      this.client.request('/api/v1/bookmarks?limit=40').catch(() => null),
+    ]);
+    const frag = document.createDocumentFragment();
+    if (articles?.length) {
+      frag.append(el('h2', { class: 'section-title', text: 'Articles' }), ...articles.map((a) => this.renderCuratedItem(a)));
+    }
+    if (posts?.length) {
+      frag.append(el('h2', { class: 'section-title', text: 'Mastodon posts' }), ...posts.map((p) => this.render(p)).filter(Boolean));
+    }
+    if (articles == null || posts == null) frag.append(el('p', { class: 'hint pad', text: "Couldn't load all of your bookmarks." }));
+    if (!frag.childNodes.length) frag.append(el('p', { class: 'hint pad', text: 'Nothing bookmarked yet. Tap 🔖 on a card to keep it here.' }));
+    body.replaceChildren(frag);
+  }
+
   openSearch() {
     this.openOverlay($('#search'));
     const q = $('#search-q');
@@ -1149,7 +1216,7 @@ class Reader {
       screen: `${window.innerWidth}x${window.innerHeight} @${window.devicePixelRatio}`,
       server: this.session.instance,
       settings: JSON.stringify({ syncNote: !!this.settings.syncNote, linksInSafari: !!this.settings.linksInSafari, curated: !!this.curated }),
-      curated: this.curated ? `${this.curated.items.length} in feed, ${this.shownCurated.size} on page, ${this.pendingCurated.length} waiting` : 'off',
+      curated: this.curated ? `${this.curated.items.length} in feed, ${this.shownCurated.size} on page, ${this.pendingCurated.length} waiting, ${this.curated.hidden} home posts filtered` : 'off',
       position: this.position,
       onPage: `${this.articles().length} posts, first unread index ${this.readCursor}, ${this.articles().length - this.readCursor} unread`,
       caughtUp: this.caughtUp,
@@ -1216,7 +1283,7 @@ class Reader {
     $('#curator-feed').value = this.settings.curatorFeed || '';
     $('#curator-token').value = this.settings.curatorToken || '';
     $('#curator-info').textContent = this.curated
-      ? `${this.curated.items.length} articles in the feed.`
+      ? `${this.curated.items.length} articles in the feed. ${this.curated.hidden} home posts filtered out so far.`
       : 'Off. Add the feed address and vote token from your curator to merge its picks into the timeline.';
     $('#curator-save').onclick = () => {
       const feed = $('#curator-feed').value.trim();

@@ -88,6 +88,8 @@ async function mockServer(ctx) {
       case '/api/v1/statuses':
         posted.push({ body: JSON.parse(req.postData()), key: req.headers()['idempotency-key'] });
         return json(route, status(5000));
+      case '/api/v1/bookmarks':
+        return json(route, [status(1001)]);
       case '/api/v1/markers':
         if (req.method() === 'POST') {
           serverMarker = JSON.parse(req.postData()).home.last_read_id;
@@ -564,12 +566,22 @@ await touch.close();
   const longPost = 'A post with a lot to say. '.repeat(40).trim();
   let feedItems = [
     item('3007', 'read-one'), // before the position: already read
-    { ...item('3013', 'between', { also: [{ url: 'https://other.example/x', source: 'rss:The Verge' }] }), image: 'https://news.example/pic.jpg' },
+    { ...item('3013', 'between', { also: [{ url: 'https://other.example/x', source: 'rss:The Verge' }] }), image: 'https://news.example/pic.jpg',
+      content_text: 'Summary of between. More at https://example.org/more.' },
     item('3015', 'from-home', { source: 'mastodon:home' }), // the timeline has it already
     { ...item('3201', 'newest', { lane: 'maybe' }), title: 'A post with a lot to say. A post with a lot…', content_text: longPost }, // after every post; a long post
   ];
   const votes = [];
   const events = [];
+  const bookmarkCalls = [];
+  const homeAsked = [];
+  // The curator's verdicts on home posts: 3020 doesn't make the cut, 3022 is
+  // a maybe, 3024's story is also covered by 9to5Mac.
+  const verdict = (id) => ({
+    show: id !== '3020',
+    lane: id === '3022' ? 'maybe' : id === '3020' ? 'drop' : 'main',
+    also: id === '3024' ? [{ url: 'https://other.example/y', source: 'rss:9to5Mac' }] : [],
+  });
   const c = await browser.newContext({ viewport: { width: 390, height: 800 }, serviceWorkers: 'block' });
   await mockServer(c);
   await c.route(`${CURATOR}/**`, async (route) => {
@@ -580,6 +592,19 @@ await touch.close();
     if (url.pathname === '/api/vote') {
       votes.push({ body: JSON.parse(req.postData()), auth: req.headers().authorization });
       return json(route, { ok: true });
+    }
+    if (url.pathname === '/api/home') {
+      const ids = JSON.parse(req.postData()).ids;
+      homeAsked.push(...ids);
+      return json(route, { verdicts: Object.fromEntries(ids.map((id) => [id, verdict(id)])) });
+    }
+    if (url.pathname === '/api/bookmark') {
+      bookmarkCalls.push(JSON.parse(req.postData()));
+      return json(route, { ok: true });
+    }
+    if (url.pathname === '/api/bookmarks') {
+      const on = bookmarkCalls.filter((b) => b.item_id === 'between').at(-1)?.on;
+      return json(route, { items: on ? [{ id: 'between', url: 'https://news.example/between', title: 'Article between', summary: 's', source: 'rss:ABC News', published: new Date().toISOString() }] : [] });
     }
     if (url.pathname === '/api/event') {
       events.push(JSON.parse(req.postData()));
@@ -625,12 +650,43 @@ await touch.close();
   await cp.click('article[data-id="3013"] button[aria-label="Less like this"]');
   await cp.waitForSelector('article[data-id="3013"] button[aria-label="Less like this"][aria-pressed="true"]');
 
+  // Home posts go through the curator: one dropped, one a maybe, one with
+  // other coverage of the same story; and 👍/👎 work on them too.
+  assert.ok(homeAsked.includes('3020'), 'home posts are sent for a verdict');
+  assert.equal(await cp.$('article[data-id="3020"]'), null, 'a home post that misses the bar is hidden');
+  assert.match(await cp.textContent('article[data-id="3022"] .curated-label'), /Maybe/, 'maybe home posts say so');
+  assert.match(await cp.textContent('article[data-id="3024"] .also'), /Also covered by 9to5Mac/, 'other coverage shown on the post');
+  await cp.click('article[data-id="3012"] button[aria-label="More like this"]');
+  await cp.waitForSelector('article[data-id="3012"] button[aria-label="More like this"][aria-pressed="true"]');
+  assert.deepEqual(votes.at(-1).body, { status_id: '3012', vote: 1 }, 'votes on Mastodon posts name the post');
+
+  // Bare URLs in curated text are links.
+  assert.equal(await cp.$eval('article[data-id="3013"] .curated-summary a', (a) => a.href), 'https://example.org/more');
+
+  // Bookmark a curated article; it shows in Bookmarks with the Mastodon ones.
+  await cp.click('article[data-id="3013"] button[aria-label="Bookmark"]');
+  await cp.waitForSelector('article[data-id="3013"] button[aria-label="Bookmark"][aria-pressed="true"]');
+  assert.deepEqual(bookmarkCalls.at(-1), { item_id: 'between', on: true });
+  await cp.click('#open-bookmarks');
+  await cp.waitForSelector('#bookmarks-body article.curated');
+  assert.match(await cp.textContent('#bookmarks-body'), /Articles.*Article between.*Mastodon posts/s, 'both kinds of bookmark listed');
+  await cp.goBack();
+  await cp.waitForSelector('#bookmarks', { state: 'hidden' });
+
+  // Tapping the card itself (not a link) opens the source too.
+  const before = events.length;
+  const [tapped] = await Promise.all([cp.waitForEvent('popup'), cp.click('article[data-id="3013"] .source-icon')]);
+  assert.equal(tapped.url(), 'https://news.example/between');
+  await tapped.close();
+  for (let i = 0; i < 20 && events.length === before; i++) await cp.waitForTimeout(50);
+  assert.equal(events.length, before + 1, 'tap-through reported as an open');
+
   // Following the link tells the curator.
   const [popup] = await Promise.all([cp.waitForEvent('popup'), cp.click('article[data-id="3013"] .curated-title')]);
   await popup.close();
   await cp.waitForFunction(() => true);
   for (let i = 0; i < 20 && !events.length; i++) await cp.waitForTimeout(50);
-  assert.deepEqual(events[0], { item_id: 'between', kind: 'open' });
+  assert.deepEqual(events.at(-1), { item_id: 'between', kind: 'open' });
 
   // Read to the end: the newest curated item comes after the last post, in
   // the maybe lane, and the position moves onto it.
@@ -673,7 +729,7 @@ await touch.close();
   await cp.waitForSelector('#timeline article[data-id="3301"].read');
   assert.ok(await cp.$('article[data-id="3301"].read'), 'curated item read before reload stays read');
   const savedVotes = await cp.evaluate(() => JSON.parse(localStorage.getItem(`mastorss.curated.votes@${new URL('.', location.href).pathname}`)));
-  assert.deepEqual(savedVotes, { between: -1 }, 'votes remembered across reloads');
+  assert.deepEqual(savedVotes, { between: -1, 'status:3012': 1 }, 'votes remembered across reloads');
   const report = await cp.evaluate(() => {
     document.querySelector('#menu').click();
     return document.querySelector('#curator-info').textContent;

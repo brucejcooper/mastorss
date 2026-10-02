@@ -242,7 +242,9 @@ const INTERACTIVE = 'a, button, summary, details.cw:not([open]), video, audio, i
 
 // Returns an <article> for a timeline entry, or null if a filter hides it.
 // `onThread(status)` opens the conversation, `onReply(status)` the composer.
-export function renderStatus(entry, { instance, client, onThread, onReply, focus = false, depth = 0 }) {
+// `curation` (when the curated feed is on): { verdict, vote, sourceLabel,
+// onVote(vote), onBookmark(on) } for posts in the home timeline.
+export function renderStatus(entry, { instance, client, onThread, onReply, focus = false, depth = 0, curation = null }) {
   const s = entry.reblog || entry;
   const f = filterHit(s);
   if (f.hide) return null;
@@ -284,18 +286,31 @@ export function renderStatus(entry, { instance, client, onThread, onReply, focus
     body = el('details', { class: 'cw filtered' }, el('summary', { text: `Filtered: ${f.warn}` }), body);
   }
   article.append(body);
+  const verdict = curation?.verdict;
+  if (verdict?.lane === 'maybe') {
+    article.prepend(el('div', { class: 'curated-label' }, '🤔 Maybe: the curator isn\u2019t sure. Tell it with 👍 or 👎'));
+    article.classList.add('maybe');
+  }
+  const also = curation && alsoCovered(verdict?.also, curation.sourceLabel);
+  if (also) body.append(also);
 
   const fav = actionButton('Favourite', '★', s.favourites_count, s.favourited, (on) => client.toggle(s.id, 'favourite', on));
   fav.dataset.kind = 'favourite';
   const boost = actionButton('Boost', '🔁', s.reblogs_count, s.reblogged, (on) => client.toggle(s.id, 'reblog', on).then((r) => r.reblog || r));
   boost.dataset.kind = 'reblog';
   if (s.visibility === 'private' || s.visibility === 'direct') boost.disabled = true;
-  const bookmark = actionButton('Bookmark', '🔖', 0, s.bookmarked, (on) => client.toggle(s.id, 'bookmark', on));
+  // A Mastodon bookmark; the curator hears about it too (a strong 👍).
+  const bookmark = actionButton('Bookmark', '🔖', 0, s.bookmarked, async (on) => {
+    const r = await client.toggle(s.id, 'bookmark', on);
+    curation?.onBookmark?.(on).catch(() => {});
+    return r;
+  });
 
   article.append(el('footer', {},
     el('button', { type: 'button', class: 'act', 'aria-label': 'Reply', title: 'Reply', onclick: () => onReply?.(s) },
       el('span', { class: 'icon', text: '💬' }), el('span', { class: 'count', text: s.replies_count ? String(s.replies_count) : '' })),
     boost, fav, bookmark,
+    ...(curation ? voteButtons(article, curation.vote, curation.onVote) : []),
     el('a', { class: 'act', href: links.status(s), target: '_blank', rel: 'noopener noreferrer', title: `Open on ${instance}`, 'aria-label': `Open on ${instance}` }, el('span', { class: 'icon', text: '↗' }))));
 
   // Tapping the post itself (not a link or button in it) opens the thread.
@@ -308,11 +323,64 @@ export function renderStatus(entry, { instance, client, onThread, onReply, focus
   return article;
 }
 
+// Plain text with any web addresses in it turned into links (curated text
+// arrives as plain text, so a URL in a post would otherwise be dead).
+const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"]+/gi;
+export function linkify(text) {
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    let url = m[0];
+    const trail = url.match(/[.,;:!?)\]]+$/); // sentence punctuation isn't part of the link
+    if (trail) url = url.slice(0, -trail[0].length);
+    const href = safeUrl(url.startsWith('www.') ? `https://${url}` : url);
+    if (!href) continue;
+    frag.append(text.slice(last, m.index), el('a', { href, target: '_blank', rel: 'noopener noreferrer', text: url }));
+    last = m.index + url.length;
+  }
+  frag.append(text.slice(last));
+  return frag;
+}
+
+// 👍 and 👎 for any card. `current` is 1, -1 or 0; `onVote(vote)` returns a
+// promise. Pressing the lit button again clears the vote.
+function voteButtons(article, current, onVote) {
+  return [[1, '👍', 'More like this'], [-1, '👎', 'Less like this']].map(([value, icon, label]) => {
+    const btn = el('button', { type: 'button', class: `act vote${current === value ? ' on' : ''}`, 'aria-pressed': String(current === value), 'aria-label': label, title: label },
+      el('span', { class: 'icon', text: icon }));
+    btn.dataset.vote = String(value);
+    btn.addEventListener('click', async () => {
+      const next = btn.getAttribute('aria-pressed') === 'true' ? 0 : value;
+      const buttons = article.querySelectorAll('button.vote');
+      buttons.forEach((b) => (b.disabled = true));
+      try {
+        await onVote(next);
+        for (const b of buttons) {
+          const on = Number(b.dataset.vote) === next;
+          b.setAttribute('aria-pressed', String(on));
+          b.classList.toggle('on', on);
+        }
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        buttons.forEach((b) => (b.disabled = false));
+      }
+    });
+    return btn;
+  });
+}
+
+function alsoCovered(also, sourceLabel) {
+  const links = (also || []).filter((a) => safeUrl(a.url));
+  if (!links.length) return null;
+  return el('p', { class: 'also' }, 'Also covered by ',
+    ...links.flatMap((a, i) => [i ? ', ' : '', el('a', { href: safeUrl(a.url), target: '_blank', rel: 'noopener noreferrer', text: sourceLabel(a.source) })]));
+}
+
 // A curated article (see curated.js). `data-id` is its place in the timeline
-// (a Mastodon-style id), `data-item` the curator's id for votes.
-// `onVote(item, vote)` returns a promise; `onOpen(item)` is called when the
-// link is followed.
-export function renderCurated(item, { vote = 0, sourceLabel, onVote, onOpen }) {
+// (a Mastodon-style id), `data-item` the curator's id for votes. Tapping the
+// card anywhere opens the source; `onOpen(item)` is told when it does.
+export function renderCurated(item, { vote = 0, bookmarked = false, sourceLabel, onVote, onBookmark, onOpen }) {
   const href = safeUrl(item.url);
   const maybe = item.lane === 'maybe';
   const article = el('article', { class: `status curated${maybe ? ' maybe' : ''}`, 'data-id': item.id, 'data-item': item.itemId });
@@ -320,7 +388,7 @@ export function renderCurated(item, { vote = 0, sourceLabel, onVote, onOpen }) {
 
   // Say in words what this card is: the edge colour alone didn't explain it.
   article.append(el('div', { class: 'curated-label' }, maybe
-    ? '🤔 Maybe: the curator isn\u2019t sure. Tell it with 👍 or 👎'
+    ? '🤔 Maybe: the curator isn’t sure. Tell it with 👍 or 👎'
     : '📰 Picked for you by the curator'));
   article.append(el('header', {},
     el('span', { class: 'avatar source-icon', 'aria-hidden': 'true', text: '📰' }),
@@ -334,9 +402,10 @@ export function renderCurated(item, { vote = 0, sourceLabel, onVote, onOpen }) {
   // just its opening words. Show the post's text once, in full, instead.
   const opening = item.title.replace(/…$/, '').trim();
   const isPost = !!opening && item.summary.replace(/\s+/g, ' ').startsWith(opening.replace(/\s+/g, ' '));
-  const text = item.summary ? el('p', { class: `curated-summary${isPost ? ' post-text' : ''}`, text: item.summary }) : null;
+  const text = item.summary ? el('p', { class: `curated-summary${isPost ? ' post-text' : ''}` }, linkify(item.summary)) : null;
+  const titleLink = link({ class: 'curated-title' }, el('strong', { text: item.title }));
   const body = el('div', { class: 'body' },
-    isPost ? null : link({ class: 'curated-title' }, el('strong', { text: item.title })),
+    isPost ? null : titleLink,
     image ? link({ class: 'curated-image', tabindex: '-1', 'aria-hidden': 'true' },
       el('img', { src: image, alt: '', loading: 'lazy', onerror: (e) => e.currentTarget.parentElement.remove() })) : null,
     text);
@@ -353,41 +422,25 @@ export function renderCurated(item, { vote = 0, sourceLabel, onVote, onOpen }) {
       if (text.scrollHeight > text.clientHeight + 2) more.hidden = false;
     }));
   }
-  const also = item.also.filter((a) => safeUrl(a.url));
-  if (also.length) {
-    body.append(el('p', { class: 'also' }, 'Also covered by ',
-      ...also.flatMap((a, i) => [i ? ', ' : '', el('a', { href: safeUrl(a.url), target: '_blank', rel: 'noopener noreferrer', text: sourceLabel(a.source) })])));
-  }
+  const also = alsoCovered(item.also, sourceLabel);
+  if (also) body.append(also);
   if (item.reason) body.append(el('details', { class: 'why' }, el('summary', { text: 'Why this?' }), el('p', { text: item.reason })));
   article.append(body);
 
-  const voteButton = (value, icon, label) => {
-    const btn = el('button', { type: 'button', class: `act vote${vote === value ? ' on' : ''}`, 'aria-pressed': String(vote === value), 'aria-label': label, title: label },
-      el('span', { class: 'icon', text: icon }));
-    btn.dataset.vote = String(value);
-    btn.addEventListener('click', async () => {
-      const next = btn.getAttribute('aria-pressed') === 'true' ? 0 : value;
-      const buttons = article.querySelectorAll('button.vote');
-      buttons.forEach((b) => (b.disabled = true));
-      try {
-        await onVote(item, next);
-        for (const b of buttons) {
-          const on = Number(b.dataset.vote) === next;
-          b.setAttribute('aria-pressed', String(on));
-          b.classList.toggle('on', on);
-        }
-      } catch (err) {
-        alert(err.message);
-      } finally {
-        buttons.forEach((b) => (b.disabled = false));
-      }
-    });
-    return btn;
-  };
-  article.append(el('footer', {},
-    voteButton(1, '👍', 'More like this'),
-    voteButton(-1, '👎', 'Less like this'),
-    link({ class: 'act', title: 'Open the article', 'aria-label': 'Open the article' }, el('span', { class: 'icon', text: '↗' }))));
+  const openLink = link({ class: 'act', title: 'Open the article', 'aria-label': 'Open the article' }, el('span', { class: 'icon', text: '↗' }));
+  const footer = el('footer', {}, ...voteButtons(article, vote, (v) => onVote(item, v)));
+  if (onBookmark) {
+    footer.append(actionButton('Bookmark', '🔖', 0, bookmarked, (on) => onBookmark(item, on)));
+  }
+  footer.append(openLink);
+  article.append(footer);
+
+  // Tapping the card anywhere else opens the source, through the same link
+  // (so "Open links in Safari" and the open signal both apply).
+  article.addEventListener('click', (e) => {
+    if (e.target.closest(INTERACTIVE) || getSelection().toString()) return;
+    (isPost ? openLink : titleLink).click();
+  });
   return article;
 }
 
