@@ -33,7 +33,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir _site
-          cp -r index.html styles.css sw.js manifest.webmanifest js icons _site/
+          cp index.html sw.js _site/  # the redirect to curator.8bitcloud.com
           # Lets a running app notice a new deploy and reload itself, and
           # shows in Settings as the version.
           echo "{\"version\":\"$(git rev-parse HEAD)\",\"built\":\"$(git log -1 --format=%cI)\"}" > _site/version.json

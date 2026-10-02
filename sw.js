@@ -1,51 +1,11 @@
-// Caches the app shell only. API responses always go to the network so the
-// timeline and read position are never stale.
-// One cache per copy of the app: prod and test live on the same origin and
-// share Cache Storage, so each only manages caches for its own scope.
-const CACHE = `mastorss-v2 ${self.registration.scope}`;
-const SHELL = [
-  './',
-  './index.html',
-  './styles.css',
-  './js/app.js',
-  './js/api.js',
-  './js/render.js',
-  './js/curated.js',
-  './manifest.webmanifest',
-  './icons/icon.svg',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/apple-touch-icon.png',
-];
-
-self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
-});
-
+// Mastorss has moved to https://curator.8bitcloud.com/. This replaces the old
+// service worker so installed copies stop serving the cached app: it clears
+// its caches, unregisters itself, and reloads open pages (which then redirect).
+self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys
-        .filter((k) => k !== CACHE && (k === 'mastorss-v1' || k.endsWith(` ${self.registration.scope}`)))
-        .map((k) => caches.delete(k))))
-      .then(() => self.clients.claim()),
-  );
-});
-
-// Network first for the shell so deploys show up straight away, cache as the
-// offline fallback.
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  if (event.request.method !== 'GET' || url.origin !== location.origin) return;
-  event.respondWith(
-    fetch(event.request)
-      .then((res) => {
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(event.request, copy));
-        }
-        return res;
-      })
-      .catch(() => caches.match(event.request, { ignoreSearch: true })),
-  );
+  event.waitUntil((async () => {
+    for (const key of await caches.keys()) if (key.startsWith('mastorss')) await caches.delete(key);
+    await self.registration.unregister();
+    for (const client of await self.clients.matchAll({ type: 'window' })) client.navigate(client.url);
+  })());
 });

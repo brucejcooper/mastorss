@@ -2,158 +2,30 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <!-- Also sent as a header by deploy/nginx.conf; the meta copy covers static hosts like GitHub Pages. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * blob:; connect-src 'self' https: wss:; base-uri 'none'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Mastorss</title>
-  <meta name="description" content="Read your Mastodon home timeline oldest to newest, like an RSS reader.">
-  <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#16171b" media="(prefers-color-scheme: dark)">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Mastorss">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="styles.css">
-  <script type="module" src="js/app.js"></script>
+  <title>Mastorss has moved</title>
+  <meta http-equiv="refresh" content="3; url=https://curator.8bitcloud.com/">
+  <style>
+    body { font: 17px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem 16px; max-width: 32rem; margin-inline: auto; background: #f6f5f2; color: #1d1d1f; }
+    @media (prefers-color-scheme: dark) { body { background: #16171b; color: #ececf1; } a { color: #8f86ff; } }
+    a { color: #5b4fd6; }
+  </style>
 </head>
 <body>
-  <div id="boot" class="boot" role="status" aria-label="Loading"><span class="spinner"></span></div>
-
-  <section id="login" hidden>
-    <h1>Mastorss</h1>
-    <p>Your Mastodon home timeline, read oldest to newest. Stop anywhere and you pick up from the same spot next time.</p>
-    <form id="login-form">
-      <label for="instance">Your server</label>
-      <input id="instance" name="instance" autocomplete="url" autocapitalize="off" spellcheck="false" inputmode="url" required>
-      <button type="submit" class="primary">Log in</button>
-    </form>
-    <p class="hint">Installed to your home screen and login doesn't come back here?
-      <button type="button" id="use-code" class="linklike">Log in with a code instead</button></p>
-    <form id="code-form" hidden>
-      <p>Approve access in the page that opened (or <a id="code-link" target="_blank" rel="noopener">open it here</a>), then paste the code it shows.</p>
-      <input id="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" required>
-      <button type="submit" class="primary">Continue</button>
-    </form>
-  </section>
-
-  <section id="reader" hidden>
-    <header id="bar">
-      <button id="menu" type="button" aria-label="Settings">☰</button>
-      <div class="bar-title">
-        <strong id="count"></strong>
-        <small id="who"></small>
-      </div>
-      <button id="open-search" type="button" aria-label="Search" title="Search (/)">🔍</button>
-      <button id="open-bookmarks" type="button" aria-label="Bookmarks" title="Bookmarks">🔖</button>
-      <button id="open-compose" type="button" aria-label="New post" title="New post (n)">✎</button>
-      <button id="refresh" type="button" aria-label="Next post" title="Next post (j)">⌄</button>
-    </header>
-
-    <div id="older"><p id="older-status"></p></div>
-    <main id="timeline"></main>
-
-    <div id="end">
-      <p id="end-status"></p>
-      <button id="retry" type="button" class="primary" hidden>Retry</button>
-      <div class="done">
-        <p class="big">You're all caught up</p>
-        <p id="last-checked">New posts will appear here automatically.</p>
-        <button id="check-new" type="button" class="linklike">Check now</button>
-        <p id="pull-hint" class="pull-hint">Pull up to check for new posts</p>
-      </div>
-    </div>
-  </section>
-
-  <section id="thread" class="overlay" hidden aria-label="Thread">
-    <header class="overlay-bar">
-      <button type="button" class="back" aria-label="Back">‹</button>
-      <strong>Thread</strong>
-    </header>
-    <div id="thread-body" class="overlay-body"></div>
-  </section>
-
-  <section id="search" class="overlay" hidden aria-label="Search">
-    <header class="overlay-bar">
-      <button type="button" class="back" aria-label="Back">‹</button>
-      <form id="search-form" role="search">
-        <input id="search-q" type="search" enterkeyhint="search" autocapitalize="off" spellcheck="false"
-               placeholder="People, #hashtags, posts or @user@server">
-      </form>
-    </header>
-    <div id="search-results" class="overlay-body">
-      <p class="hint pad">Search finds people and hashtags anywhere, and posts you've written, favourited, boosted or been mentioned in. Tapping a person opens their profile on your server, where you can follow them.</p>
-    </div>
-  </section>
-
-  <section id="bookmarks" class="overlay" hidden aria-label="Bookmarks">
-    <header class="overlay-bar">
-      <button type="button" class="back" aria-label="Back">‹</button>
-      <strong>Bookmarks</strong>
-    </header>
-    <div id="bookmarks-body" class="overlay-body"></div>
-  </section>
-
-  <dialog id="compose">
-    <form id="compose-form">
-      <div id="compose-context" class="hint"></div>
-      <input id="compose-cw" placeholder="Content warning (optional)" autocomplete="off">
-      <textarea id="compose-text" rows="7" placeholder="What's on your mind?" required></textarea>
-      <div class="compose-row">
-        <select id="compose-visibility" aria-label="Visibility">
-          <option value="public">🌐 Public</option>
-          <option value="unlisted">🔓 Quiet public</option>
-          <option value="private">🔒 Followers only</option>
-          <option value="direct">✉️ Mentioned people only</option>
-        </select>
-        <span id="compose-count"></span>
-      </div>
-      <div class="compose-row">
-        <button type="button" id="compose-cancel">Cancel</button>
-        <button type="submit" id="compose-send" class="primary">Post</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="settings">
-    <h2>Settings</h2>
-    <label class="row">
-      <input type="checkbox" id="sync-note">
-      <span>Sync my position across devices
-        <small>Keeps your place in a private note on your Mastodon account that only you can see, so other devices running Mastorss pick up where you left off. Other Mastodon apps never touch it.</small></span>
-    </label>
-    <p class="hint"><span id="sync-info"></span>
-      <button type="button" id="sync-login" class="linklike" hidden>Log in again</button></p>
-    <label class="row" id="safari-row" hidden>
-      <input type="checkbox" id="links-in-safari">
-      <span>Open links in Safari
-        <small>Avoids the blank page left behind when a link opens another app (YouTube, Mastodon, …), but that app's back button then goes to Safari instead of Mastorss. Needs iOS 17 or later; only applies to the home-screen app.</small></span>
-    </label>
-    <fieldset class="curator">
-      <legend>Curated feed</legend>
-      <label for="curator-feed">Feed address</label>
-      <input id="curator-feed" type="url" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://…/feed.json">
-      <label for="curator-token">Vote token</label>
-      <input id="curator-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <p class="hint"><span id="curator-info"></span></p>
-      <button id="curator-save" type="button">Save</button>
-    </fieldset>
-    <p id="position-info" class="hint"></p>
-    <button id="mark-all" type="button">Mark everything read</button>
-    <button id="copy-diagnostics" type="button">Copy diagnostics</button>
-    <button id="logout" type="button" class="danger">Log out</button>
-    <button id="settings-close" type="button" class="primary">Done</button>
-    <p class="hint version-row"><span id="app-version"></span>
-      <button type="button" id="check-update" class="linklike">Check for update</button></p>
-  </dialog>
-
-  <div id="update-bar" role="status" hidden>
-    New version available <button type="button" id="update-reload" class="primary">Reload</button>
-  </div>
-
-  <div id="toast" role="alert" hidden></div>
+  <h1>Mastorss has moved</h1>
+  <p>It now lives at <a href="https://curator.8bitcloud.com/">curator.8bitcloud.com</a>, where you sign in with Mechination.
+     Taking you there…</p>
+  <p>If you added this page to your home screen, add the new address instead.</p>
+  <script>
+    // Tidy up after the old app: its service worker, its cache, and what it
+    // kept in this (shared github.io) storage, including its Mastodon login.
+    try {
+      Object.keys(localStorage).filter((k) => k.startsWith('mastorss.')).forEach((k) => localStorage.removeItem(k));
+    } catch {}
+    navigator.serviceWorker?.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+    caches?.keys().then((ks) => ks.filter((k) => k.startsWith('mastorss')).forEach((k) => caches.delete(k))).catch(() => {});
+    setTimeout(() => location.replace('https://curator.8bitcloud.com/'), 1500);
+  </script>
 </body>
 </html>
